@@ -25,6 +25,12 @@ def save_jsonl(path: Path, rows: Iterable[dict]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def load_jsonl(path: Path) -> List[dict]:
     rows: List[dict] = []
     with path.open("r", encoding="utf-8") as handle:

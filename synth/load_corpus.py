@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-from synth.utils import normalize_text, save_jsonl, load_jsonl, stable_doc_id
+from synth.utils import normalize_text, save_jsonl, append_jsonl, load_jsonl, stable_doc_id
 
 
 @dataclass
@@ -61,6 +61,9 @@ def load_corpus(raw_dir: Path, processed_dir: Path, *, use_cache: bool = True) -
     if not pdf_paths:
         raise FileNotFoundError(f"No PDF files found in {raw_dir}")
 
+    if cache_path.exists():
+        cache_path.unlink()
+
     for pdf_path in pdf_paths:
         result = converter.convert(str(pdf_path))
         document = result.document
@@ -69,9 +72,10 @@ def load_corpus(raw_dir: Path, processed_dir: Path, *, use_cache: bool = True) -
         if not normalized:
             continue
         metadata = _build_metadata(str(pdf_path), None)
-        records.append(DocumentRecord(page_content=normalized, metadata=metadata))
+        record = DocumentRecord(page_content=normalized, metadata=metadata)
+        records.append(record)
+        append_jsonl(cache_path, record.__dict__)
 
-    save_jsonl(cache_path, [record.__dict__ for record in records])
     return records
 
 
