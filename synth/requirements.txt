@@ -1,0 +1,15 @@
+pandas
+numpy
+pyyaml
+networkx
+scikit-learn
+ragas
+langchain-core
+langchain-community
+langchain-text-splitters
+pypdf
+openai
+httpx
+requests
+urllib3
+neo4j
