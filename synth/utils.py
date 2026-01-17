@@ -31,6 +31,17 @@ def append_jsonl(path: Path, row: dict) -> None:
         handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def save_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+
+
+def load_json(path: Path) -> object:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def load_jsonl(path: Path) -> List[dict]:
     rows: List[dict] = []
     with path.open("r", encoding="utf-8") as handle:
