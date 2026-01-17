@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-from langchain_community.document_loaders import PyPDFDirectoryLoader
-
 from synth.utils import normalize_text, save_jsonl, load_jsonl, stable_doc_id
 
 
@@ -41,14 +39,44 @@ def load_corpus(raw_dir: Path, processed_dir: Path, *, use_cache: bool = True) -
     if not raw_dir.exists():
         raise FileNotFoundError(f"Raw PDF directory not found: {raw_dir}")
 
-    loader = PyPDFDirectoryLoader(str(raw_dir))
-    docs = loader.load()
     records: List[DocumentRecord] = []
-    for doc in docs:
-        source_path = doc.metadata.get("source", "")
-        page = doc.metadata.get("page")
-        metadata = _build_metadata(source_path, page)
-        records.append(DocumentRecord(page_content=normalize_text(doc.page_content), metadata=metadata))
+    try:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+    except ImportError as exc:
+        raise RuntimeError("docling is required for PDF parsing. Install it first.") from exc
+
+    ocr_options = TesseractCliOcrOptions(lang=["rus+eng"])
+    pipeline_options = PdfPipelineOptions(
+        do_ocr=True,
+        force_full_page_ocr=True,
+        ocr_options=ocr_options,
+        artifacts_path="./models",
+    )
+    converter = DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+    )
+    pdf_paths = sorted(raw_dir.rglob("*.pdf"))
+    if not pdf_paths:
+        raise FileNotFoundError(f"No PDF files found in {raw_dir}")
+
+    for pdf_path in pdf_paths:
+        result = converter.convert(str(pdf_path))
+        document = result.document
+        text = _document_text(document)
+        normalized = normalize_text(text)
+        if not normalized:
+            continue
+        metadata = _build_metadata(str(pdf_path), None)
+        records.append(DocumentRecord(page_content=normalized, metadata=metadata))
 
     save_jsonl(cache_path, [record.__dict__ for record in records])
     return records
+
+
+def _document_text(document: object) -> str:
+    try:
+        return document.export_to_text()
+    except AttributeError:
+        return document.export_to_markdown()

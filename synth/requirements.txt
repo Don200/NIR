@@ -13,3 +13,5 @@ httpx
 requests
 urllib3
 neo4j
+matplotlib
+docling
