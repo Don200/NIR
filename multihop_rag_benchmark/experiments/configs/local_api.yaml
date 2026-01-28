@@ -1,0 +1,63 @@
+# =============================================================================
+# Конфиг для локального OpenAI-compatible API
+# =============================================================================
+# Для закрытого контура с собственным LLM/Embedding сервером
+
+output_dir: "./benchmark_results"
+cache_dir: "./cache"
+
+dataset:
+  name: "yixuantt/MultiHopRAG"
+  max_samples: null  # все сэмплы
+
+# -----------------------------------------------------------------------------
+# LLM (например, vLLM, Ollama, LocalAI, text-generation-inference)
+# -----------------------------------------------------------------------------
+llm:
+  api_key_env: "LOCAL_API_KEY"       # Или "OPENAI_API_KEY" если сервер его требует
+  api_base: "http://localhost:8000/v1"  # vLLM default
+  # api_base: "http://localhost:11434/v1"  # Ollama
+  # api_base: "http://localhost:8080/v1"  # LocalAI
+  model: "Qwen/Qwen2.5-7B-Instruct"  # Имя модели на сервере
+  temperature: 0.0
+  max_tokens: 512
+
+# -----------------------------------------------------------------------------
+# Embedding (например, TEI, Infinity, LocalAI)
+# -----------------------------------------------------------------------------
+embedding:
+  api_key_env: "LOCAL_API_KEY"
+  api_base: "http://localhost:8080/v1"  # text-embeddings-inference
+  # api_base: "http://localhost:7997/v1"  # Infinity
+  model: "BAAI/bge-large-en-v1.5"    # или другая embedding модель
+  batch_size: 32  # Уменьшить если OOM
+
+# -----------------------------------------------------------------------------
+# RAG параметры
+# -----------------------------------------------------------------------------
+vector_rag:
+  chunk_size: 256
+  chunk_overlap: 50
+  top_k: 10
+
+kg_rag:
+  max_triplets_per_chunk: 10
+  include_original_text: true
+  max_hops: 2
+
+community_rag:
+  graphrag_root: "./graphrag_index"
+  community_level: 2
+  local_search_top_k: 10
+  global_search_top_k: 5
+
+evaluation:
+  normalize_answers: true
+  case_sensitive: false
+
+# Начни с простых методов для проверки
+methods:
+  - vector_rag
+  - kg_rag
+  # - hybrid_selection
+  # - hybrid_integration

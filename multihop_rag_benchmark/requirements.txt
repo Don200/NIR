@@ -1,0 +1,21 @@
+# Core dependencies
+openai>=1.0.0
+pyyaml>=6.0
+numpy>=1.24.0
+
+# Vector search
+faiss-cpu>=1.7.4
+chromadb>=0.4.0  # Persistent vector index
+
+# Graph operations
+networkx>=3.0
+
+# Data loading
+datasets>=2.14.0
+huggingface-hub>=0.16.0
+
+# Microsoft GraphRAG (optional, for community-based approach)
+# graphrag>=0.3.0
+
+# Utilities
+tqdm>=4.65.0
