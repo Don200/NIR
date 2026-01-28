@@ -81,15 +81,26 @@ def load_multihop_rag(
 
     corpus = []
     corpus_data = corpus_dataset["train"]  # Данные в train split
-    for item in corpus_data:
+    for idx, item in enumerate(corpus_data):
+        # Генерируем уникальный doc_id из url или индекса
+        url = item.get("url", "")
+        if url:
+            # Используем хеш от url как id
+            import hashlib
+            doc_id = hashlib.md5(url.encode()).hexdigest()[:12]
+        else:
+            doc_id = f"doc_{idx}"
+
         doc = MultiHopRAGCorpus(
-            doc_id=str(item.get("id", "")),
+            doc_id=doc_id,
             title=item.get("title", ""),
-            content=item.get("content", item.get("text", "")),
+            content=item.get("body", ""),  # Контент в поле "body"
             metadata={
                 "source": item.get("source", ""),
-                "date": item.get("date", ""),
-                "url": item.get("url", ""),
+                "published_at": item.get("published_at", ""),
+                "url": url,
+                "category": item.get("category", ""),
+                "author": item.get("author", ""),
             }
         )
         corpus.append(doc)
