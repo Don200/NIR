@@ -41,51 +41,60 @@ def load_multihop_rag(
     except ImportError:
         raise ImportError("Please install datasets: pip install datasets")
 
-    # Load dataset
-    dataset = load_dataset(
+    cache_dir_str = str(cache_dir) if cache_dir else None
+
+    # Load QA samples (config: MultiHopRAG)
+    print("Loading MultiHopRAG QA samples...")
+    qa_dataset = load_dataset(
         "yixuantt/MultiHopRAG",
-        cache_dir=str(cache_dir) if cache_dir else None,
+        "MultiHopRAG",  # Указываем конфиг явно
+        cache_dir=cache_dir_str,
     )
 
-    # Parse QA samples from MultiHopRAG_QA split
     samples = []
-    if "MultiHopRAG" in dataset:
-        qa_data = dataset["MultiHopRAG"]
-        for idx, item in enumerate(qa_data):
-            if max_samples and idx >= max_samples:
-                break
+    qa_data = qa_dataset["train"]  # Данные в train split
+    for idx, item in enumerate(qa_data):
+        if max_samples and idx >= max_samples:
+            break
 
-            sample = MultiHopRAGSample(
-                query_id=str(item.get("id", idx)),
-                query=item["query"],
-                answer=item["answer"],
-                query_type=item.get("question_type", "unknown"),
-                evidence_ids=item.get("evidence_list", []),
-                metadata={
-                    "source": item.get("source", ""),
-                    "raw": {k: v for k, v in item.items()
-                            if k not in ["query", "answer", "question_type", "evidence_list"]}
-                }
-            )
-            samples.append(sample)
+        sample = MultiHopRAGSample(
+            query_id=str(item.get("id", idx)),
+            query=item["query"],
+            answer=item["answer"],
+            query_type=item.get("question_type", "unknown"),
+            evidence_ids=item.get("evidence_list", []),
+            metadata={
+                "source": item.get("source", ""),
+                "raw": {k: v for k, v in item.items()
+                        if k not in ["query", "answer", "question_type", "evidence_list"]}
+            }
+        )
+        samples.append(sample)
 
-    # Parse corpus from corpus split
+    # Load corpus (config: corpus)
+    print("Loading corpus documents...")
+    corpus_dataset = load_dataset(
+        "yixuantt/MultiHopRAG",
+        "corpus",  # Указываем конфиг явно
+        cache_dir=cache_dir_str,
+    )
+
     corpus = []
-    if "corpus" in dataset:
-        corpus_data = dataset["corpus"]
-        for item in corpus_data:
-            doc = MultiHopRAGCorpus(
-                doc_id=str(item.get("id", "")),
-                title=item.get("title", ""),
-                content=item.get("content", item.get("text", "")),
-                metadata={
-                    "source": item.get("source", ""),
-                    "date": item.get("date", ""),
-                    "url": item.get("url", ""),
-                }
-            )
-            corpus.append(doc)
+    corpus_data = corpus_dataset["train"]  # Данные в train split
+    for item in corpus_data:
+        doc = MultiHopRAGCorpus(
+            doc_id=str(item.get("id", "")),
+            title=item.get("title", ""),
+            content=item.get("content", item.get("text", "")),
+            metadata={
+                "source": item.get("source", ""),
+                "date": item.get("date", ""),
+                "url": item.get("url", ""),
+            }
+        )
+        corpus.append(doc)
 
+    print(f"Loaded {len(samples)} samples, {len(corpus)} documents")
     return samples, corpus
 
 
