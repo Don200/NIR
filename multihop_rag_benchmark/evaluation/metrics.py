@@ -166,7 +166,15 @@ class ExactMatchMetric:
         self.normalize = normalize
         self.case_sensitive = case_sensitive
 
-    def __call__(self, prediction: str, ground_truth: str) -> bool:
+    def __call__(self, prediction: str, ground_truth: str, normalize: bool = None) -> bool:
+        """
+        Compare prediction with ground truth.
+
+        Args:
+            prediction: Model prediction
+            ground_truth: Ground truth answer
+            normalize: Ignored (uses self.normalize). For compatibility with function interface.
+        """
         pred = prediction
         gt = ground_truth
 
@@ -194,7 +202,8 @@ class FuzzyMatchMetric:
         self.case_sensitive = case_sensitive
         self.threshold = threshold
 
-    def __call__(self, prediction: str, ground_truth: str) -> bool:
+    def __call__(self, prediction: str, ground_truth: str, normalize: bool = None) -> bool:
+        """Compare with fuzzy matching. normalize arg ignored for compatibility."""
         return fuzzy_match(
             prediction,
             ground_truth,
@@ -214,7 +223,8 @@ class ContainsMatchMetric:
         self.normalize = normalize
         self.case_sensitive = case_sensitive
 
-    def __call__(self, prediction: str, ground_truth: str) -> bool:
+    def __call__(self, prediction: str, ground_truth: str, normalize: bool = None) -> bool:
+        """Check if ground truth is contained in prediction. normalize arg ignored for compatibility."""
         pred = prediction
         gt = ground_truth
 
