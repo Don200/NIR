@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 from llama_index.core import (
     Document as LlamaDocument,

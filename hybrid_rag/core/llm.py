@@ -3,7 +3,7 @@
 from typing import Optional
 
 from langfuse.openai import OpenAI
-from langfuse.decorators import observe
+from langfuse import observe
 
 from .config import LLMConfig
 from .prompts import SYSTEM_PROMPT_RU, FEW_SHOT_EXAMPLES_RU, build_few_shot_prompt

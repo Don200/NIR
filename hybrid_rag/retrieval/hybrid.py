@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 from ..core.config import Config
 from ..core.models import SearchResult, QueryResult, RetrievalMethod

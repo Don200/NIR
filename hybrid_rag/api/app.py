@@ -8,7 +8,7 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

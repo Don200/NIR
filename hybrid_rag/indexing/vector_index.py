@@ -9,7 +9,7 @@ import chromadb
 from chromadb.config import Settings
 
 from langfuse.openai import OpenAI
-from langfuse.decorators import observe
+from langfuse import observe
 
 from llama_index.core import Document as LlamaDocument
 from llama_index.core.node_parser import (
