@@ -1,5 +1,3 @@
-"""LlamaIndex PropertyGraphIndex for knowledge graph."""
-
 import logging
 from pathlib import Path
 from typing import Optional
@@ -18,12 +16,7 @@ from llama_index.core.indices.property_graph import SimpleLLMPathExtractor
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
 
-# Try to import OpenAILikeEmbedding, fallback to OpenAIEmbedding
-try:
-    from llama_index.embeddings.openai_like import OpenAILikeEmbedding
-    HAS_OPENAI_LIKE_EMBEDDING = True
-except ImportError:
-    HAS_OPENAI_LIKE_EMBEDDING = False
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 
 from ..core.config import Config
 from ..core.models import Document, SearchResult, RetrievalMethod
@@ -48,7 +41,6 @@ class GraphIndex:
 
     def _setup_llama_settings(self) -> None:
         """Configure LlamaIndex global settings."""
-        # Use OpenAILike for OpenAI-compatible APIs (OpenRouter, etc.)
         Settings.llm = OpenAILike(
             model=self.config.llm.model,
             api_key=self.config.llm.api_key,
@@ -57,20 +49,11 @@ class GraphIndex:
             is_chat_model=True,
         )
 
-        # Use OpenAILikeEmbedding if available, otherwise try OpenAIEmbedding with model_name
-        if HAS_OPENAI_LIKE_EMBEDDING:
-            Settings.embed_model = OpenAILikeEmbedding(
-                model_name=self.config.embedding.model,
-                api_key=self.config.embedding.api_key,
-                api_base=self.config.embedding.base_url,
-            )
-        else:
-            # Fallback: use OpenAIEmbedding with model_name to bypass validation
-            Settings.embed_model = OpenAIEmbedding(
-                model_name=self.config.embedding.model,
-                api_key=self.config.embedding.api_key,
-                api_base=self.config.embedding.base_url,
-            )
+        Settings.embed_model = OpenAILikeEmbedding(
+            model_name=self.config.embedding.model,
+            api_key=self.config.embedding.api_key,
+            api_base=self.config.embedding.base_url,
+        )
 
     @property
     def index(self) -> Optional[PropertyGraphIndex]:
@@ -80,7 +63,6 @@ class GraphIndex:
     @observe()
     def index_documents(self, documents: list[Document]) -> int:
         """Build graph index from documents."""
-        # Convert to LlamaIndex documents
         llama_docs = [
             LlamaDocument(
                 text=doc.content,
@@ -95,14 +77,12 @@ class GraphIndex:
 
         logger.info(f"Building graph index from {len(llama_docs)} documents")
 
-        # Create extractor for triplets
         kg_extractor = SimpleLLMPathExtractor(
             llm=Settings.llm,
             max_paths_per_chunk=self.config.graph.max_triplets_per_chunk,
             num_workers=4,
         )
 
-        # Build index
         self._index = PropertyGraphIndex.from_documents(
             llama_docs,
             kg_extractors=[kg_extractor],
@@ -110,11 +90,9 @@ class GraphIndex:
             show_progress=True,
         )
 
-        # Persist to disk
         self._index.storage_context.persist(persist_dir=str(self.persist_dir))
         logger.info(f"Graph index saved to {self.persist_dir}")
 
-        # Return approximate count
         try:
             graph_store = self._index.property_graph_store
             return len(graph_store.get_triplets())
@@ -148,7 +126,6 @@ class GraphIndex:
 
         k = top_k or self.config.graph.similarity_top_k
 
-        # Use retriever
         retriever = self._index.as_retriever(
             include_text=True,
             similarity_top_k=k,
@@ -173,7 +150,6 @@ class GraphIndex:
         """Check if index exists and is loaded."""
         if self._index is not None:
             return True
-        # Check if persisted
         return (self.persist_dir / "index_store.json").exists()
 
     def get_triplets_sample(self, limit: int = 10) -> list[tuple[str, str, str]]:
@@ -201,16 +177,12 @@ class GraphIndex:
             graph_store = self._index.property_graph_store
             triplets = graph_store.get_triplets()[:limit]
 
-            # Collect unique nodes
             nodes_dict = {}
             edges = []
 
             for triplet in triplets:
-                subject = triplet[0]  # EntityNode
-                relation = triplet[1]  # Relation
-                obj = triplet[2]  # EntityNode
+                subject, relation, obj = triplet[0], triplet[1], triplet[2]
 
-                # Add nodes
                 if subject.id not in nodes_dict:
                     nodes_dict[subject.id] = {
                         "id": subject.id,
@@ -225,7 +197,6 @@ class GraphIndex:
                         "properties": getattr(obj, "properties", {}),
                     }
 
-                # Add edge
                 edges.append({
                     "source": subject.id,
                     "target": obj.id,

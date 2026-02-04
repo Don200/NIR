@@ -1,5 +1,3 @@
-"""Core components: models, LLM client, configuration."""
-
 from .models import Document, Chunk, SearchResult
 from .config import Config, load_config
 from .llm import LLMClient

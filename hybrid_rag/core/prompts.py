@@ -1,5 +1,3 @@
-"""Prompt templates for RAG system."""
-
 from dataclasses import dataclass
 from typing import Optional
 

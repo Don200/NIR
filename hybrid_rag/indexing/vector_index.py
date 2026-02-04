@@ -1,5 +1,3 @@
-"""ChromaDB vector index for semantic search."""
-
 import logging
 from pathlib import Path
 from typing import Optional
@@ -37,13 +35,11 @@ class VectorIndex:
         self.persist_dir = persist_dir or config.index_dir / "vector"
         self.persist_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize ChromaDB
         self.client = chromadb.PersistentClient(
             path=str(self.persist_dir),
             settings=Settings(anonymized_telemetry=False),
         )
 
-        # OpenAI embedding client
         self.embedding_client = OpenAI(
             api_key=config.embedding.api_key,
             base_url=config.embedding.base_url,
@@ -77,29 +73,24 @@ class VectorIndex:
         1. If content looks like markdown (has headers), use MarkdownNodeParser
         2. Then apply SentenceSplitter to handle long sections
         """
-        # Create LlamaIndex document
         llama_doc = LlamaDocument(
             text=doc.content,
             doc_id=doc.id,
             metadata={"title": doc.title or "", **doc.metadata},
         )
 
-        # Check if content is markdown (has headers)
         is_markdown = any(
             line.strip().startswith("#")
             for line in doc.content.split("\n")[:50]
         )
 
-        # Step 1: Initial parsing
         if is_markdown:
-            # Parse by markdown structure first
             md_parser = MarkdownNodeParser()
             nodes = md_parser.get_nodes_from_documents([llama_doc])
             logger.debug(f"MarkdownParser produced {len(nodes)} nodes")
         else:
             nodes = [llama_doc]
 
-        # Step 2: Apply sentence splitter to handle long sections
         sentence_splitter = SentenceSplitter(
             chunk_size=self.config.vector.chunk_size,
             chunk_overlap=self.config.vector.chunk_overlap,
@@ -108,16 +99,13 @@ class VectorIndex:
         final_nodes = sentence_splitter.get_nodes_from_documents(nodes)
         logger.debug(f"SentenceSplitter produced {len(final_nodes)} final nodes")
 
-        # Convert to our Chunk format
         chunks = []
         for idx, node in enumerate(final_nodes):
             chunk_id = f"{doc.id}::chunk_{idx}"
 
-            # Extract metadata
             node_metadata = dict(node.metadata) if node.metadata else {}
             node_metadata["chunk_index"] = idx
 
-            # Get header info if available (from markdown parsing)
             if hasattr(node, "metadata"):
                 for key in ["Header_1", "Header_2", "Header_3"]:
                     if key in node.metadata:
@@ -149,7 +137,6 @@ class VectorIndex:
 
         logger.info(f"Indexing {len(all_chunks)} chunks from {len(documents)} documents")
 
-        # Process in batches
         batch_size = 100
         total_batches = (len(all_chunks) + batch_size - 1) // batch_size
 
@@ -191,8 +178,7 @@ class VectorIndex:
                 results["metadatas"][0],
                 results["distances"][0],
             ):
-                # Convert distance to similarity score
-                score = 1 - dist  # cosine distance to similarity
+                score = 1 - dist
                 search_results.append(
                     SearchResult(
                         content=doc,

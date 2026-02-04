@@ -1,5 +1,3 @@
-"""FastAPI application."""
-
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -27,7 +25,6 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-# Global retriever instance
 retriever: Optional[HybridRetriever] = None
 
 
@@ -53,7 +50,6 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         logger.info("Starting Hybrid RAG API...")
         retriever = HybridRetriever(config)
 
-        # Load indexes
         status = retriever.load_indexes()
         logger.info(f"Index load status: {status}")
 
@@ -68,7 +64,6 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -111,7 +106,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
         sources = [
             SourceItem(
-                content=s.content[:500],  # Truncate for response
+                content=s.content[:500],
                 score=s.score,
                 source=s.source.value,
                 metadata=s.metadata,
@@ -132,32 +127,6 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         r = get_retriever()
         data = r.graph_index.get_graph_data(limit=limit)
         return data
-
-    @app.get("/graph/debug")
-    async def graph_debug():
-        """Debug graph index state."""
-        r = get_retriever()
-        g = r.graph_index
-        info = {
-            "index_is_none": g._index is None,
-            "persist_dir": str(g.persist_dir),
-        }
-        if g._index is not None:
-            store = g._index.property_graph_store
-            info["store_type"] = type(store).__name__
-            try:
-                triplets = store.get_triplets()
-                info["triplets_count"] = len(triplets)
-                if triplets:
-                    t = triplets[0]
-                    info["first_triplet"] = str(t)
-            except Exception as e:
-                info["triplets_error"] = str(e)
-            try:
-                info["store_methods"] = [m for m in dir(store) if not m.startswith("_") and "get" in m.lower()]
-            except Exception:
-                pass
-        return info
 
     return app
 

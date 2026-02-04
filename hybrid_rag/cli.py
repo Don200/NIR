@@ -1,5 +1,3 @@
-"""CLI for Hybrid RAG indexing and management."""
-
 import argparse
 import json
 import logging

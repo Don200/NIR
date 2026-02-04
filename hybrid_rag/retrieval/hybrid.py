@@ -1,5 +1,3 @@
-"""Hybrid retriever combining Vector and Graph search."""
-
 import logging
 from typing import Optional
 
@@ -57,11 +55,9 @@ class HybridRetriever:
             results.extend(graph_results)
             logger.debug(f"Graph retrieval: {len(graph_results)} results")
 
-        # Deduplicate by content similarity
         if method == RetrievalMethod.HYBRID:
             results = self._deduplicate_results(results)
 
-        # Sort by score
         results.sort(key=lambda x: x.score, reverse=True)
 
         return results
@@ -79,7 +75,6 @@ class HybridRetriever:
         seen_content = set()
 
         for r in results:
-            # Simple dedup by normalized content prefix
             content_key = r.content[:200].lower().strip()
             if content_key not in seen_content:
                 seen_content.add(content_key)
@@ -96,10 +91,7 @@ class HybridRetriever:
         max_context_length: Optional[int] = None,
     ) -> QueryResult:
         """Full RAG pipeline: retrieve + generate."""
-        # Use config default if not specified
         max_ctx = max_context_length or self.config.generation.max_context_length
-
-        # Retrieve
         results = self.retrieve(query, method, top_k)
 
         if not results:
@@ -110,13 +102,11 @@ class HybridRetriever:
                 method=method,
             )
 
-        # Build context with source metadata
         context_parts = []
         current_length = 0
         used_results = []
 
         for r in results:
-            # Format context block with metadata
             formatted = format_context_block(r.content, r.metadata)
             if current_length + len(formatted) > max_ctx:
                 break
@@ -126,7 +116,6 @@ class HybridRetriever:
 
         context = "\n\n---\n\n".join(context_parts)
 
-        # Generate answer
         answer = self.llm.generate_with_context(query, context)
 
         return QueryResult(

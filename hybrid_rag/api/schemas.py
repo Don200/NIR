@@ -1,5 +1,3 @@
-"""Pydantic schemas for API."""
-
 from pydantic import BaseModel, Field
 from typing import Optional
 from enum import Enum
@@ -12,7 +10,6 @@ class RetrievalMethodEnum(str, Enum):
 
 
 class QueryRequest(BaseModel):
-    """Query request body."""
     query: str = Field(..., description="User question")
     method: RetrievalMethodEnum = Field(
         default=RetrievalMethodEnum.hybrid,
@@ -29,7 +26,6 @@ class QueryRequest(BaseModel):
 
 
 class SourceItem(BaseModel):
-    """Single source in response."""
     content: str
     score: float
     source: str
@@ -37,7 +33,6 @@ class SourceItem(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    """Query response."""
     answer: str
     sources: list[SourceItem]
     method: str
@@ -45,13 +40,11 @@ class QueryResponse(BaseModel):
 
 
 class StatusResponse(BaseModel):
-    """System status response."""
     vector_indexed: bool
     vector_count: int
     graph_indexed: bool
 
 
 class HealthResponse(BaseModel):
-    """Health check response."""
     status: str = "ok"
     version: str

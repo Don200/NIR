@@ -1,17 +1,12 @@
 """Streamlit UI for Hybrid RAG."""
 
+import os
+from typing import Optional
+
 import streamlit as st
 import requests
-from typing import Optional
-import os
+from streamlit_agraph import agraph, Node, Edge, Config
 
-try:
-    from streamlit_agraph import agraph, Node, Edge, Config
-    HAS_AGRAPH = True
-except ImportError:
-    HAS_AGRAPH = False
-
-# Configuration - use docker service name or localhost
 API_URL = os.getenv("API_URL", "http://api:8000")
 
 
@@ -73,39 +68,35 @@ def render_graph_page():
         if data and data.get("nodes"):
             st.success(f"Loaded {len(data['nodes'])} nodes and {len(data['edges'])} edges")
 
-            if HAS_AGRAPH:
-                # Build nodes and edges for agraph
-                nodes = []
-                edges = []
-
-                for node_data in data["nodes"]:
-                    nodes.append(Node(
-                        id=node_data["id"],
-                        label=node_data["label"][:50],  # Truncate long labels
-                        size=25,
-                        color="#97C2FC",
-                    ))
-
-                for edge_data in data["edges"]:
-                    edges.append(Edge(
-                        source=edge_data["source"],
-                        target=edge_data["target"],
-                        label=edge_data["label"],
-                        color="#848484",
-                    ))
-
-                config = Config(
-                    width=1200,
-                    height=800,
-                    directed=True,
-                    physics=True,
-                    hierarchical=False,
+            nodes = [
+                Node(
+                    id=node_data["id"],
+                    label=node_data["label"][:50],
+                    size=25,
+                    color="#97C2FC",
                 )
+                for node_data in data["nodes"]
+            ]
 
-                agraph(nodes=nodes, edges=edges, config=config)
-            else:
-                st.warning("streamlit-agraph not installed. Install it for visualization.")
-                st.json({"nodes": len(data["nodes"]), "edges": len(data["edges"])})
+            edges = [
+                Edge(
+                    source=edge_data["source"],
+                    target=edge_data["target"],
+                    label=edge_data["label"],
+                    color="#848484",
+                )
+                for edge_data in data["edges"]
+            ]
+
+            config = Config(
+                width=1200,
+                height=800,
+                directed=True,
+                physics=True,
+                hierarchical=False,
+            )
+
+            agraph(nodes=nodes, edges=edges, config=config)
         else:
             st.warning("No graph data available")
 
