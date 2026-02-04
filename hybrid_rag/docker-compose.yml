@@ -35,7 +35,7 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
-    command: ["streamlit", "run", "/app/hybrid_rag/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    command: ["uv", "run", "streamlit", "run", "/app/hybrid_rag/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     depends_on:
       - api
     restart: unless-stopped
