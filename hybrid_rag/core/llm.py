@@ -1,7 +1,10 @@
 """LLM client for OpenAI-compatible APIs."""
 
-from openai import OpenAI
 from typing import Optional
+
+from langfuse.openai import OpenAI
+from langfuse.decorators import observe
+
 from .config import LLMConfig
 from .prompts import SYSTEM_PROMPT_RU, FEW_SHOT_EXAMPLES_RU, build_few_shot_prompt
 
@@ -16,6 +19,7 @@ class LLMClient:
             base_url=config.base_url,
         )
 
+    @observe(as_type="generation")
     def generate(
         self,
         prompt: str,
@@ -38,6 +42,7 @@ class LLMClient:
 
         return response.choices[0].message.content or ""
 
+    @observe(as_type="generation")
     def generate_with_context(
         self,
         query: str,

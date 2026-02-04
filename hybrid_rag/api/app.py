@@ -8,6 +8,8 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
+from langfuse.decorators import observe
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -88,6 +90,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         return StatusResponse(**s)
 
     @app.post("/query", response_model=QueryResponse)
+    @observe(name="api_query")
     async def query(request: QueryRequest):
         """Query the RAG system."""
         r = get_retriever()

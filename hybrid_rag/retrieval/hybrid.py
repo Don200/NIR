@@ -3,6 +3,8 @@
 import logging
 from typing import Optional
 
+from langfuse.decorators import observe
+
 from ..core.config import Config
 from ..core.models import SearchResult, QueryResult, RetrievalMethod
 from ..core.llm import LLMClient
@@ -35,6 +37,7 @@ class HybridRetriever:
         }
         return results
 
+    @observe(name="hybrid_retrieve")
     def retrieve(
         self,
         query: str,
@@ -84,6 +87,7 @@ class HybridRetriever:
 
         return unique
 
+    @observe(name="rag_query")
     def query(
         self,
         query: str,

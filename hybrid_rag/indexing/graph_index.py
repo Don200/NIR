@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from langfuse.decorators import observe
+
 from llama_index.core import (
     Document as LlamaDocument,
     PropertyGraphIndex,
@@ -75,6 +77,7 @@ class GraphIndex:
         """Get loaded index."""
         return self._index
 
+    @observe()
     def index_documents(self, documents: list[Document]) -> int:
         """Build graph index from documents."""
         # Convert to LlamaIndex documents
@@ -136,6 +139,7 @@ class GraphIndex:
             logger.error(f"Failed to load graph index: {e}")
             return False
 
+    @observe()
     def search(self, query: str, top_k: Optional[int] = None) -> list[SearchResult]:
         """Search graph for relevant triplets and nodes."""
         if self._index is None:

@@ -7,7 +7,9 @@ from typing import Optional
 from tqdm import tqdm
 import chromadb
 from chromadb.config import Settings
-from openai import OpenAI
+
+from langfuse.openai import OpenAI
+from langfuse.decorators import observe
 
 from llama_index.core import Document as LlamaDocument
 from llama_index.core.node_parser import (
@@ -59,6 +61,7 @@ class VectorIndex:
             )
         return self._collection
 
+    @observe()
     def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings from OpenAI API."""
         response = self.embedding_client.embeddings.create(
@@ -168,6 +171,7 @@ class VectorIndex:
 
         return len(all_chunks)
 
+    @observe()
     def search(self, query: str, top_k: Optional[int] = None) -> list[SearchResult]:
         """Search for similar chunks."""
         k = top_k or self.config.vector.top_k
