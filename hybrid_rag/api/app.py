@@ -133,6 +133,32 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         data = r.graph_index.get_graph_data(limit=limit)
         return data
 
+    @app.get("/graph/debug")
+    async def graph_debug():
+        """Debug graph index state."""
+        r = get_retriever()
+        g = r.graph_index
+        info = {
+            "index_is_none": g._index is None,
+            "persist_dir": str(g.persist_dir),
+        }
+        if g._index is not None:
+            store = g._index.property_graph_store
+            info["store_type"] = type(store).__name__
+            try:
+                triplets = store.get_triplets()
+                info["triplets_count"] = len(triplets)
+                if triplets:
+                    t = triplets[0]
+                    info["first_triplet"] = str(t)
+            except Exception as e:
+                info["triplets_error"] = str(e)
+            try:
+                info["store_methods"] = [m for m in dir(store) if not m.startswith("_") and "get" in m.lower()]
+            except Exception:
+                pass
+        return info
+
     return app
 
 
