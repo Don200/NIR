@@ -12,8 +12,7 @@ COPY pyproject.toml .
 COPY . /app/hybrid_rag/
 COPY config.yaml /app/config.yaml
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev
+RUN uv sync --no-dev
 
 RUN mkdir -p /app/indexes
 
