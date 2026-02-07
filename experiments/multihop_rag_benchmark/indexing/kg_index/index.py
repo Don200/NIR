@@ -41,14 +41,15 @@ class GraphRAGIndex:
         embedding_client: EmbeddingClient,
         max_paths_per_chunk: int = 10,
         max_cluster_size: int = 10,
+        num_workers: int = 4,
     ):
         self.llm_client = llm_client
         self.embedding_client = embedding_client
 
-        self.extractor = GraphRAGExtractor(llm_client, max_paths_per_chunk)
+        self.extractor = GraphRAGExtractor(llm_client, max_paths_per_chunk, num_workers)
         self.graph_store = GraphStore()
         self.community_detector = CommunityDetector(max_cluster_size)
-        self.community_summarizer = CommunitySummarizer(llm_client)
+        self.community_summarizer = CommunitySummarizer(llm_client, num_workers)
 
         self.communities: Dict[int, Community] = {}
         self.entity_to_community_ids: Dict[str, List[int]] = {}

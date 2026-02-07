@@ -34,6 +34,7 @@ graphrag:
   max_paths_per_chunk: 10
   max_cluster_size: 10
   local_search_top_k: 10
+  num_workers: 4
 
 # Evaluation settings
 evaluation:

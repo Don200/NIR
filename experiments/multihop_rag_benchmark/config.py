@@ -54,6 +54,7 @@ class GraphRAGConfig:
     max_paths_per_chunk: int = 10
     max_cluster_size: int = 10
     local_search_top_k: int = 10
+    num_workers: int = 4
 
 
 @dataclass
@@ -172,6 +173,7 @@ def save_config(config: BenchmarkConfig, path: Path) -> None:
             "max_paths_per_chunk": config.graphrag.max_paths_per_chunk,
             "max_cluster_size": config.graphrag.max_cluster_size,
             "local_search_top_k": config.graphrag.local_search_top_k,
+            "num_workers": config.graphrag.num_workers,
         },
         "evaluation": {
             "normalize_answers": config.evaluation.normalize_answers,

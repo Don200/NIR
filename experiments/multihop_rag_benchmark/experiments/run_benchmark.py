@@ -97,6 +97,7 @@ def build_graphrag_index(
         embedding_client=embedding_client,
         max_paths_per_chunk=config.graphrag.max_paths_per_chunk,
         max_cluster_size=config.graphrag.max_cluster_size,
+        num_workers=config.graphrag.num_workers,
     )
 
     if use_cache:

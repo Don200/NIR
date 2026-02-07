@@ -55,6 +55,7 @@ graphrag:
   max_paths_per_chunk: 10    # Макс. сущностей/связей из одного chunk
   max_cluster_size: 10       # Leiden параметр
   local_search_top_k: 10    # Top-K сущностей для local search
+  num_workers: 4             # Параллельных LLM-вызовов при extraction
 
 # -----------------------------------------------------------------------------
 # Настройки оценки
