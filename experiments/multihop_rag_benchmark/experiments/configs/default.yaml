@@ -42,6 +42,7 @@ graphrag:
 evaluation:
   normalize_answers: true
   case_sensitive: false
+  primary_metric: contains_match
 
 # Methods to run (comment out to skip)
 methods:

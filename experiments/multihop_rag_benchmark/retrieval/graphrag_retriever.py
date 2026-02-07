@@ -20,8 +20,12 @@ class GraphRAGLocalRetriever(BaseRetriever):
     def retrieve(self, query: str) -> RetrievalResult:
         result = self.index.local_search(query, top_k=self.top_k)
 
-        # Assemble context: entity details first, then community summaries
+        # Assemble context: source text first (most precise), then entities, then summaries
         context_parts = []
+
+        if result.source_chunks:
+            context_parts.append("=== Source Text ===")
+            context_parts.append("\n\n---\n\n".join(result.source_chunks))
 
         if result.entity_context:
             context_parts.append("=== Relevant Entities ===")
@@ -40,9 +44,10 @@ class GraphRAGLocalRetriever(BaseRetriever):
                 "matched_community_ids": result.matched_community_ids,
                 "num_entity_contexts": len(result.entity_context),
                 "num_summaries": len(result.community_summaries),
+                "num_source_chunks": len(result.source_chunks),
                 **result.metadata,
             },
-            num_chunks=len(result.entity_context) + len(result.community_summaries),
+            num_chunks=len(result.source_chunks) + len(result.entity_context) + len(result.community_summaries),
             retrieval_method=self.name,
         )
 

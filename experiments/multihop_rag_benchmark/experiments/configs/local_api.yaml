@@ -51,6 +51,7 @@ graphrag:
 evaluation:
   normalize_answers: true
   case_sensitive: false
+  primary_metric: contains_match
 
 # Начни с простых методов для проверки
 methods:

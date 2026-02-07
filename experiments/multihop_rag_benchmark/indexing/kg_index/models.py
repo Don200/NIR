@@ -43,3 +43,5 @@ class GraphRAGSearchResult:
     entity_context: List[str] = field(default_factory=list)
     # Global map-reduce: extracted points with relevance scores
     global_search_points: List[Dict[str, Any]] = field(default_factory=list)
+    # Original source text chunks for matched entities
+    source_chunks: List[str] = field(default_factory=list)

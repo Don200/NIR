@@ -221,7 +221,10 @@ def run_benchmark(
         )
 
     # Run evaluation
-    evaluator = BenchmarkEvaluator(llm_client)
+    evaluator = BenchmarkEvaluator(
+        llm_client,
+        primary_metric=config.evaluation.primary_metric,
+    )
     results: List[EvaluationResult] = []
 
     for method_name, retriever in retrievers.items():

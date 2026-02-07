@@ -5,6 +5,7 @@ from .metrics import (
     calculate_accuracy,
     calculate_accuracy_by_type,
     ExactMatchMetric,
+    ContainsMatchMetric,
     FuzzyMatchMetric,
 )
 from .evaluator import BenchmarkEvaluator, EvaluationResult
@@ -14,6 +15,7 @@ __all__ = [
     "calculate_accuracy",
     "calculate_accuracy_by_type",
     "ExactMatchMetric",
+    "ContainsMatchMetric",
     "FuzzyMatchMetric",
     "BenchmarkEvaluator",
     "EvaluationResult",

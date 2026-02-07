@@ -15,6 +15,7 @@ from .metrics import (
     calculate_accuracy_by_type,
     ExactMatchMetric,
     ContainsMatchMetric,
+    FuzzyMatchMetric,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,9 +118,16 @@ class BenchmarkEvaluator:
     Runs retrieval + generation pipeline and computes metrics.
     """
 
+    METRIC_REGISTRY = {
+        "exact_match": ExactMatchMetric,
+        "contains_match": ContainsMatchMetric,
+        "fuzzy_match": FuzzyMatchMetric,
+    }
+
     def __init__(
         self,
         llm_client: LLMClient,
+        primary_metric: str = "contains_match",
         use_exact_match: bool = True,
         use_contains_match: bool = True,
     ):
@@ -131,8 +139,14 @@ class BenchmarkEvaluator:
         if use_contains_match:
             self.metrics.append(ContainsMatchMetric())
 
-        # Default to exact match for accuracy calculation
-        self.primary_metric = ExactMatchMetric()
+        # Resolve primary metric by name
+        metric_cls = self.METRIC_REGISTRY.get(primary_metric)
+        if metric_cls is None:
+            raise ValueError(
+                f"Unknown metric '{primary_metric}'. "
+                f"Available: {list(self.METRIC_REGISTRY.keys())}"
+            )
+        self.primary_metric = metric_cls()
 
     def generate_answer(
         self,
@@ -143,7 +157,7 @@ class BenchmarkEvaluator:
         """Generate answer given query and context."""
         if system_prompt is None:
             system_prompt = """You are a helpful assistant answering questions based on provided context.
-Answer concisely and precisely. If the context doesn't contain the answer, say "I don't know" or "Cannot be determined".
+Answer concisely and precisely. If the context doesn't contain the answer, say "Insufficient information."
 For yes/no questions, answer with just "yes" or "no" when possible.
 For questions asking for names, dates, or specific facts, provide just the answer without explanation."""
 
@@ -189,7 +203,7 @@ For questions asking for names, dates, or specific facts, provide just the answe
                     context=retrieval_result.context,
                 )
             else:
-                prediction = "Cannot be determined from the given context."
+                prediction = "Insufficient information."
 
             # Check correctness
             is_correct = self.primary_metric(prediction, sample.answer)

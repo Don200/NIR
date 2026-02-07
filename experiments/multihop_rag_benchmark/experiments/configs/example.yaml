@@ -65,6 +65,7 @@ graphrag:
 evaluation:
   normalize_answers: true    # Нормализовать ответы (убрать артикли, пунктуацию)
   case_sensitive: false      # Регистронезависимое сравнение
+  primary_metric: contains_match  # exact_match | contains_match | fuzzy_match
 
 # -----------------------------------------------------------------------------
 # Методы для запуска

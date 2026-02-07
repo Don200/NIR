@@ -64,6 +64,9 @@ class GraphRAGIndex:
         self._community_keys: List[int] = []
         self._community_embeddings: Optional[np.ndarray] = None
 
+        # Chunk ID -> content mapping for source text retrieval
+        self._chunks_map: Dict[str, str] = {}
+
     def build(self, chunks: List[Chunk], show_progress: bool = True) -> None:
         """Build the full GraphRAG index from chunks."""
         logger.info(
@@ -72,6 +75,9 @@ class GraphRAGIndex:
             f"num_workers={self.extractor.num_workers} | "
             f"max_cluster_size={self.community_detector.max_cluster_size}"
         )
+
+        # Store chunk contents for source text retrieval in local search
+        self._chunks_map = {c.chunk_id: c.content for c in chunks}
 
         # 1. Extract entities and relationships
         logger.info("[build] Step 1/6: Extracting entities and relationships...")
@@ -197,6 +203,18 @@ class GraphRAGIndex:
         # Build enriched entity context (descriptions + relationships)
         entity_context = self._build_entity_context(matched_entity_keys)
 
+        # Collect source text chunks for matched entities
+        source_chunks = []
+        seen_chunk_ids = set()
+        if self._chunks_map:
+            for entity_key in matched_entity_keys:
+                entity = self.graph_store.get_entity(entity_key)
+                if entity:
+                    for chunk_id in entity.source_chunk_ids:
+                        if chunk_id not in seen_chunk_ids and chunk_id in self._chunks_map:
+                            seen_chunk_ids.add(chunk_id)
+                            source_chunks.append(self._chunks_map[chunk_id])
+
         # Collect community summaries
         summaries = []
         for cid in sorted(matched_community_ids):
@@ -210,6 +228,7 @@ class GraphRAGIndex:
             f"{len(entity_context)} entity contexts -> "
             f"{len(matched_community_ids)} communities -> "
             f"{len(summaries)} summaries | "
+            f"{len(source_chunks)} source chunks | "
             f"total_summary_chars={sum(len(s) for s in summaries)}"
         )
 
@@ -218,6 +237,7 @@ class GraphRAGIndex:
             matched_entities=matched_entities,
             matched_community_ids=sorted(matched_community_ids),
             entity_context=entity_context,
+            source_chunks=source_chunks,
             metadata={"top_k": top_k, "search_type": "local"},
         )
 
@@ -350,6 +370,11 @@ class GraphRAGIndex:
             with open(path / "community_keys.json", "w", encoding="utf-8") as f:
                 json.dump(self._community_keys, f)
 
+        # Save chunk content map for source text retrieval
+        if self._chunks_map:
+            with open(path / "chunks_map.json", "w", encoding="utf-8") as f:
+                json.dump(self._chunks_map, f, ensure_ascii=False)
+
         logger.info(f"GraphRAG index saved to {path}")
 
     def load(self, path: Path) -> bool:
@@ -408,6 +433,14 @@ class GraphRAGIndex:
                 self._community_embeddings = np.load(str(comm_emb_path))
                 with open(comm_keys_path, "r", encoding="utf-8") as f:
                     self._community_keys = json.load(f)
+
+            # Load chunk content map (graceful fallback for old caches)
+            chunks_map_path = path / "chunks_map.json"
+            if chunks_map_path.exists():
+                with open(chunks_map_path, "r", encoding="utf-8") as f:
+                    self._chunks_map = json.load(f)
+            else:
+                self._chunks_map = {}
 
             logger.info(f"GraphRAG index loaded from {path}")
             return True

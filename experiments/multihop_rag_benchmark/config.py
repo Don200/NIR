@@ -65,6 +65,7 @@ class EvaluationConfig:
     """Evaluation configuration."""
     normalize_answers: bool = True
     case_sensitive: bool = False
+    primary_metric: str = "contains_match"
 
 
 @dataclass
@@ -183,6 +184,7 @@ def save_config(config: BenchmarkConfig, path: Path) -> None:
         "evaluation": {
             "normalize_answers": config.evaluation.normalize_answers,
             "case_sensitive": config.evaluation.case_sensitive,
+            "primary_metric": config.evaluation.primary_metric,
         },
         "methods": config.methods,
     }
