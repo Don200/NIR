@@ -1,6 +1,6 @@
 __pycache__
 venv/
-data/
+/data/
 .env
 *indexes*
 CLAUDE.md
