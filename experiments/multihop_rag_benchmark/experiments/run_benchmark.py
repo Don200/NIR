@@ -308,8 +308,22 @@ def main():
         action="store_true",
         help="Force rebuild of cached indices",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable DEBUG logging for GraphRAG pipeline (extraction, graph, communities)",
+    )
 
     args = parser.parse_args()
+
+    # Enable debug logging for GraphRAG modules
+    if args.debug:
+        for module in [
+            "experiments.multihop_rag_benchmark.indexing.kg_index",
+            "multihop_rag_benchmark.indexing.kg_index",
+        ]:
+            logging.getLogger(module).setLevel(logging.DEBUG)
+        logger.info("DEBUG logging enabled for GraphRAG pipeline")
 
     # Load config
     config = load_config(args.config)
