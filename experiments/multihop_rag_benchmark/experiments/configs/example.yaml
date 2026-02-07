@@ -49,21 +49,12 @@ vector_rag:
   top_k: 10            # Количество chunks для retrieval (10 как в статье)
 
 # -----------------------------------------------------------------------------
-# KG-based GraphRAG (LlamaIndex-style)
+# GraphRAG v2 (community-based, self-contained)
 # -----------------------------------------------------------------------------
-kg_rag:
-  max_triplets_per_chunk: 10   # Макс. триплетов из одного chunk
-  include_original_text: true  # Включать исходный текст в контекст
-  max_hops: 2                  # Глубина обхода графа от найденных сущностей
-
-# -----------------------------------------------------------------------------
-# Community-based GraphRAG (Microsoft GraphRAG)
-# -----------------------------------------------------------------------------
-community_rag:
-  graphrag_root: "./graphrag_index"  # Директория для MS GraphRAG
-  community_level: 2                  # Уровень сообщества для local search
-  local_search_top_k: 10
-  global_search_top_k: 5
+graphrag:
+  max_paths_per_chunk: 10    # Макс. сущностей/связей из одного chunk
+  max_cluster_size: 10       # Leiden параметр
+  local_search_top_k: 10    # Top-K сущностей для local search
 
 # -----------------------------------------------------------------------------
 # Настройки оценки
@@ -78,8 +69,7 @@ evaluation:
 # Закомментируй ненужные методы
 methods:
   - vector_rag              # Базовый Vector RAG
-  - kg_rag                  # KG-based GraphRAG
-  # - community_rag_local   # MS GraphRAG Local (требует pip install graphrag)
-  # - community_rag_global  # MS GraphRAG Global
+  - graphrag_local          # GraphRAG v2 Local search
+  - graphrag_global         # GraphRAG v2 Global search
   - hybrid_selection        # Выбор метода по типу запроса
   - hybrid_integration      # Комбинация обоих методов

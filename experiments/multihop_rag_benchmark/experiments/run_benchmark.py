@@ -24,11 +24,9 @@ from ..data.preprocessing import corpus_to_documents, chunk_documents
 from ..generation.llm_client import LLMClient, EmbeddingClient
 from ..indexing.vector_index import VectorIndex
 from ..indexing.chroma_index import ChromaVectorIndex
-from ..indexing.kg_index import KnowledgeGraphIndex
-from ..indexing.community_index import CommunityGraphIndex
+from ..indexing.kg_index import GraphRAGIndex
 from ..retrieval.vector_retriever import VectorRetriever
-from ..retrieval.kg_retriever import KGRetriever
-from ..retrieval.community_retriever import CommunityLocalRetriever, CommunityGlobalRetriever
+from ..retrieval.graphrag_retriever import GraphRAGLocalRetriever, GraphRAGGlobalRetriever
 from ..retrieval.hybrid_retriever import SelectionRetriever, IntegrationRetriever
 from ..evaluation.evaluator import BenchmarkEvaluator, EvaluationResult
 
@@ -84,7 +82,7 @@ def build_vector_index(
     return index
 
 
-def build_kg_index(
+def build_graphrag_index(
     config: BenchmarkConfig,
     chunks,
     llm_client,
@@ -92,42 +90,26 @@ def build_kg_index(
     use_cache: bool = True,
     force_rebuild: bool = False,
 ):
-    """Build knowledge graph index with optional caching."""
-    logger.info("Building knowledge graph index...")
-    index = KnowledgeGraphIndex(
+    """Build GraphRAG v2 index with optional caching."""
+    logger.info("Building GraphRAG v2 index...")
+    index = GraphRAGIndex(
         llm_client=llm_client,
         embedding_client=embedding_client,
-        max_triplets_per_chunk=config.kg_rag.max_triplets_per_chunk,
+        max_paths_per_chunk=config.graphrag.max_paths_per_chunk,
+        max_cluster_size=config.graphrag.max_cluster_size,
     )
 
     if use_cache:
-        cache_dir = config.cache_dir / "kg_index"
-        index.build_from_chunks_cached(
+        cache_dir = config.cache_dir / "graphrag_index"
+        index.build_cached(
             chunks,
             cache_dir=cache_dir,
             force_rebuild=force_rebuild,
         )
     else:
-        index.build_from_chunks(chunks)
+        index.build(chunks)
 
-    logger.info(f"KG index ready: {index.stats}")
-    return index
-
-
-def build_community_index(config: BenchmarkConfig, documents):
-    """Build community-based GraphRAG index."""
-    logger.info("Building community GraphRAG index...")
-    index = CommunityGraphIndex(
-        root_dir=config.community_rag.graphrag_root,
-        llm_model=config.llm.model,
-        llm_api_key=config.llm.api_key,
-        llm_api_base=config.llm.api_base,
-        embedding_model=config.embedding.model,
-        embedding_api_key=config.embedding.api_key,
-        embedding_api_base=config.embedding.api_base,
-    )
-    index.index_documents(documents)
-    logger.info("Community index built")
+    logger.info(f"GraphRAG index ready: {index.stats}")
     return index
 
 
@@ -176,17 +158,13 @@ def run_benchmark(
 
     # Build indices based on required methods
     vector_index = None
-    kg_index = None
-    community_index = None
+    graphrag_index = None
 
     needs_vector = any(m in methods for m in [
         "vector_rag", "hybrid_selection", "hybrid_integration"
     ])
-    needs_kg = any(m in methods for m in [
-        "kg_rag", "hybrid_selection", "hybrid_integration"
-    ])
-    needs_community = any(m in methods for m in [
-        "community_rag_local", "community_rag_global"
+    needs_graphrag = any(m in methods for m in [
+        "graphrag_local", "graphrag_global", "hybrid_selection", "hybrid_integration"
     ])
 
     if needs_vector:
@@ -195,14 +173,11 @@ def run_benchmark(
             use_cache=use_cache, force_rebuild=force_rebuild
         )
 
-    if needs_kg:
-        kg_index = build_kg_index(
+    if needs_graphrag:
+        graphrag_index = build_graphrag_index(
             config, chunks, llm_client, embedding_client,
             use_cache=use_cache, force_rebuild=force_rebuild
         )
-
-    if needs_community:
-        community_index = build_community_index(config, documents)
 
     # Create retrievers
     retrievers = {}
@@ -212,36 +187,28 @@ def run_benchmark(
             vector_index, top_k=config.vector_rag.top_k
         )
 
-    if "kg_rag" in methods and kg_index:
-        retrievers["kg_rag"] = KGRetriever(
-            kg_index,
-            max_hops=config.kg_rag.max_hops,
-            include_text=config.kg_rag.include_original_text,
+    if "graphrag_local" in methods and graphrag_index:
+        retrievers["graphrag_local"] = GraphRAGLocalRetriever(
+            graphrag_index,
+            top_k=config.graphrag.local_search_top_k,
         )
 
-    if "community_rag_local" in methods and community_index:
-        retrievers["community_rag_local"] = CommunityLocalRetriever(
-            community_index,
-            community_level=config.community_rag.community_level,
+    if "graphrag_global" in methods and graphrag_index:
+        retrievers["graphrag_global"] = GraphRAGGlobalRetriever(
+            graphrag_index,
         )
 
-    if "community_rag_global" in methods and community_index:
-        retrievers["community_rag_global"] = CommunityGlobalRetriever(
-            community_index,
-            community_level=1,  # Higher level for global
-        )
-
-    if "hybrid_selection" in methods and vector_index and kg_index:
+    if "hybrid_selection" in methods and vector_index and graphrag_index:
         retrievers["hybrid_selection"] = SelectionRetriever(
             vector_retriever=VectorRetriever(vector_index, top_k=config.vector_rag.top_k),
-            graph_retriever=KGRetriever(kg_index, max_hops=config.kg_rag.max_hops),
+            graph_retriever=GraphRAGLocalRetriever(graphrag_index, top_k=config.graphrag.local_search_top_k),
             llm_client=llm_client,
         )
 
-    if "hybrid_integration" in methods and vector_index and kg_index:
+    if "hybrid_integration" in methods and vector_index and graphrag_index:
         retrievers["hybrid_integration"] = IntegrationRetriever(
             vector_retriever=VectorRetriever(vector_index, top_k=config.vector_rag.top_k),
-            graph_retriever=KGRetriever(kg_index, max_hops=config.kg_rag.max_hops),
+            graph_retriever=GraphRAGLocalRetriever(graphrag_index, top_k=config.graphrag.local_search_top_k),
         )
 
     # Run evaluation

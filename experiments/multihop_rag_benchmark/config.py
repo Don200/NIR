@@ -49,20 +49,11 @@ class VectorRAGConfig:
 
 
 @dataclass
-class KGRAGConfig:
-    """Knowledge Graph RAG configuration (LlamaIndex-based)."""
-    max_triplets_per_chunk: int = 10
-    include_original_text: bool = True
-    max_hops: int = 2
-
-
-@dataclass
-class CommunityRAGConfig:
-    """Community-based GraphRAG configuration (Microsoft GraphRAG)."""
-    graphrag_root: Path = field(default_factory=lambda: Path("./graphrag_index"))
-    community_level: int = 2
+class GraphRAGConfig:
+    """GraphRAG v2 configuration (community-based, self-contained)."""
+    max_paths_per_chunk: int = 10
+    max_cluster_size: int = 10
     local_search_top_k: int = 10
-    global_search_top_k: int = 5
 
 
 @dataclass
@@ -87,18 +78,16 @@ class BenchmarkConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     vector_rag: VectorRAGConfig = field(default_factory=VectorRAGConfig)
-    kg_rag: KGRAGConfig = field(default_factory=KGRAGConfig)
-    community_rag: CommunityRAGConfig = field(default_factory=CommunityRAGConfig)
+    graphrag: GraphRAGConfig = field(default_factory=GraphRAGConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
     # Experiment settings
     methods: list = field(default_factory=lambda: [
         "vector_rag",
-        "kg_rag",
-        "community_rag_local",
-        "community_rag_global",
+        "graphrag_local",
+        "graphrag_global",
         "hybrid_selection",
-        "hybrid_integration"
+        "hybrid_integration",
     ])
 
     def __post_init__(self):
@@ -137,13 +126,8 @@ def load_config(path: Path) -> BenchmarkConfig:
     # Update RAG configs
     if "vector_rag" in data:
         config.vector_rag = VectorRAGConfig(**data["vector_rag"])
-    if "kg_rag" in data:
-        config.kg_rag = KGRAGConfig(**data["kg_rag"])
-    if "community_rag" in data:
-        cfg = data["community_rag"]
-        if "graphrag_root" in cfg:
-            cfg["graphrag_root"] = Path(cfg["graphrag_root"])
-        config.community_rag = CommunityRAGConfig(**cfg)
+    if "graphrag" in data:
+        config.graphrag = GraphRAGConfig(**data["graphrag"])
 
     # Update evaluation config
     if "evaluation" in data:
@@ -184,16 +168,10 @@ def save_config(config: BenchmarkConfig, path: Path) -> None:
             "chunk_overlap": config.vector_rag.chunk_overlap,
             "top_k": config.vector_rag.top_k,
         },
-        "kg_rag": {
-            "max_triplets_per_chunk": config.kg_rag.max_triplets_per_chunk,
-            "include_original_text": config.kg_rag.include_original_text,
-            "max_hops": config.kg_rag.max_hops,
-        },
-        "community_rag": {
-            "graphrag_root": str(config.community_rag.graphrag_root),
-            "community_level": config.community_rag.community_level,
-            "local_search_top_k": config.community_rag.local_search_top_k,
-            "global_search_top_k": config.community_rag.global_search_top_k,
+        "graphrag": {
+            "max_paths_per_chunk": config.graphrag.max_paths_per_chunk,
+            "max_cluster_size": config.graphrag.max_cluster_size,
+            "local_search_top_k": config.graphrag.local_search_top_k,
         },
         "evaluation": {
             "normalize_answers": config.evaluation.normalize_answers,

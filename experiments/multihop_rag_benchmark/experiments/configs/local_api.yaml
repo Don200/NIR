@@ -40,16 +40,10 @@ vector_rag:
   chunk_overlap: 50
   top_k: 10
 
-kg_rag:
-  max_triplets_per_chunk: 10
-  include_original_text: true
-  max_hops: 2
-
-community_rag:
-  graphrag_root: "./graphrag_index"
-  community_level: 2
+graphrag:
+  max_paths_per_chunk: 10
+  max_cluster_size: 10
   local_search_top_k: 10
-  global_search_top_k: 5
 
 evaluation:
   normalize_answers: true
@@ -58,6 +52,7 @@ evaluation:
 # Начни с простых методов для проверки
 methods:
   - vector_rag
-  - kg_rag
+  - graphrag_local
+  # - graphrag_global
   # - hybrid_selection
   # - hybrid_integration

@@ -9,13 +9,11 @@ chromadb>=0.4.0  # Persistent vector index
 
 # Graph operations
 networkx>=3.0
+graspologic>=3.0  # Hierarchical Leiden community detection
 
 # Data loading
 datasets>=2.14.0
 huggingface-hub>=0.16.0
-
-# Microsoft GraphRAG (optional, for community-based approach)
-# graphrag>=0.3.0
 
 # Utilities
 tqdm>=4.65.0
