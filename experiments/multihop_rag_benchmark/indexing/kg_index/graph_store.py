@@ -28,19 +28,29 @@ class GraphStore:
         key = self._normalize_name(entity.name)
 
         if key in self._entities:
-            # Merge: combine descriptions and source chunks
             existing = self._entities[key]
+            old_desc_len = len(existing.description)
             if entity.description and entity.description not in existing.description:
                 existing.description = f"{existing.description} {entity.description}".strip()
-            for cid in entity.source_chunk_ids:
-                if cid not in existing.source_chunk_ids:
-                    existing.source_chunk_ids.append(cid)
+            new_chunks = [c for c in entity.source_chunk_ids if c not in existing.source_chunk_ids]
+            existing.source_chunk_ids.extend(new_chunks)
+            logger.debug(
+                f"[graph] MERGE entity \"{entity.name}\" (key={key}) | "
+                f"desc: {old_desc_len}->{len(existing.description)} chars | "
+                f"+{len(new_chunks)} chunks (total={len(existing.source_chunk_ids)})"
+            )
         else:
             self._entities[key] = Entity(
                 name=entity.name,
                 entity_type=entity.entity_type,
                 description=entity.description,
                 source_chunk_ids=list(entity.source_chunk_ids),
+            )
+            logger.debug(
+                f"[graph] ADD entity \"{entity.name}\" (key={key}) | "
+                f"type={entity.entity_type} | "
+                f"desc_len={len(entity.description)} | "
+                f"chunks={entity.source_chunk_ids}"
             )
 
         # Update graph node
@@ -60,8 +70,10 @@ class GraphStore:
         # Ensure both nodes exist
         if src_key not in self._graph:
             self._graph.add_node(src_key, name=relationship.source, entity_type="Unknown", description="")
+            logger.debug(f"[graph] ADD implicit node \"{relationship.source}\" (from relationship)")
         if tgt_key not in self._graph:
             self._graph.add_node(tgt_key, name=relationship.target, entity_type="Unknown", description="")
+            logger.debug(f"[graph] ADD implicit node \"{relationship.target}\" (from relationship)")
 
         # Add or merge edge
         if self._graph.has_edge(src_key, tgt_key):
@@ -73,6 +85,10 @@ class GraphStore:
                 "source_chunk_id": relationship.source_chunk_id,
             })
             existing["relations"] = relations
+            logger.debug(
+                f"[graph] MERGE edge \"{relationship.source}\" -[{relationship.relation}]-> "
+                f"\"{relationship.target}\" | total_relations={len(relations)}"
+            )
         else:
             self._graph.add_edge(
                 src_key, tgt_key,
@@ -81,6 +97,10 @@ class GraphStore:
                     "description": relationship.description,
                     "source_chunk_id": relationship.source_chunk_id,
                 }],
+            )
+            logger.debug(
+                f"[graph] ADD edge \"{relationship.source}\" -[{relationship.relation}]-> "
+                f"\"{relationship.target}\""
             )
 
     def get_entity(self, name: str) -> Optional[Entity]:
@@ -149,7 +169,7 @@ class GraphStore:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"Graph saved to {path}")
+        logger.info(f"[graph] Saved to {path}: {self.stats}")
 
     def load(self, path: Path) -> None:
         """Load graph from JSON."""
@@ -182,4 +202,4 @@ class GraphStore:
                 relations=edge.get("relations", []),
             )
 
-        logger.info(f"Graph loaded from {path}: {self.stats}")
+        logger.info(f"[graph] Loaded from {path}: {self.stats}")

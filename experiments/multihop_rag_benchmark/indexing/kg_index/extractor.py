@@ -45,11 +45,40 @@ class GraphRAGExtractor:
             max_knowledge_triplets=self.max_paths_per_chunk,
         )
 
+        text_preview = chunk.content[:200].replace('\n', ' ')
+        logger.debug(
+            f"[extract] chunk={chunk.chunk_id} | "
+            f"text_preview=\"{text_preview}...\" | "
+            f"max_triplets={self.max_paths_per_chunk}"
+        )
+
         try:
             response = self.llm_client.generate(prompt, max_tokens=2048)
-            return self._parse_fn(response, chunk.chunk_id)
+            logger.debug(
+                f"[extract] chunk={chunk.chunk_id} | "
+                f"llm_response_len={len(response)} | "
+                f"response_preview=\"{response[:300].replace(chr(10), ' ')}...\""
+            )
+            entities, relationships = self._parse_fn(response, chunk.chunk_id)
+            logger.debug(
+                f"[extract] chunk={chunk.chunk_id} | "
+                f"parsed: {len(entities)} entities, {len(relationships)} relationships"
+            )
+            if entities:
+                names = [e.name for e in entities]
+                logger.debug(
+                    f"[extract] chunk={chunk.chunk_id} | "
+                    f"entities: {names}"
+                )
+            if relationships:
+                rels = [f"{r.source} -[{r.relation}]-> {r.target}" for r in relationships]
+                logger.debug(
+                    f"[extract] chunk={chunk.chunk_id} | "
+                    f"relationships: {rels}"
+                )
+            return entities, relationships
         except Exception as e:
-            logger.warning(f"Extraction failed for chunk {chunk.chunk_id}: {e}")
+            logger.warning(f"[extract] FAILED chunk={chunk.chunk_id}: {e}")
             return [], []
 
     def extract_batch(
@@ -59,10 +88,18 @@ class GraphRAGExtractor:
         all_entities: List[Entity] = []
         all_relationships: List[Relationship] = []
 
+        logger.info(
+            f"[extract_batch] Starting extraction: "
+            f"{len(chunks)} chunks, {self.num_workers} workers, "
+            f"max_paths_per_chunk={self.max_paths_per_chunk}"
+        )
+
         if self.num_workers <= 1:
             return self._extract_sequential(chunks, show_progress)
 
         # Parallel extraction
+        failed_count = 0
+        empty_count = 0
         futures = {}
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             for chunk in chunks:
@@ -80,17 +117,22 @@ class GraphRAGExtractor:
                 iterator = as_completed(futures)
 
             for future in iterator:
+                chunk_id = futures[future]
                 try:
                     entities, relationships = future.result()
+                    if not entities and not relationships:
+                        empty_count += 1
                     all_entities.extend(entities)
                     all_relationships.extend(relationships)
                 except Exception as e:
-                    chunk_id = futures[future]
-                    logger.warning(f"Worker failed for chunk {chunk_id}: {e}")
+                    failed_count += 1
+                    logger.warning(f"[extract_batch] Worker failed for chunk {chunk_id}: {e}")
 
         logger.info(
-            f"Extracted {len(all_entities)} entities and "
-            f"{len(all_relationships)} relationships from {len(chunks)} chunks"
+            f"[extract_batch] Done: "
+            f"{len(all_entities)} entities, {len(all_relationships)} relationships "
+            f"from {len(chunks)} chunks | "
+            f"empty={empty_count}, failed={failed_count}"
         )
         return all_entities, all_relationships
 
@@ -100,6 +142,7 @@ class GraphRAGExtractor:
         """Fallback sequential extraction."""
         all_entities: List[Entity] = []
         all_relationships: List[Relationship] = []
+        empty_count = 0
 
         iterator = chunks
         if show_progress:
@@ -111,12 +154,15 @@ class GraphRAGExtractor:
 
         for chunk in iterator:
             entities, relationships = self.extract(chunk)
+            if not entities and not relationships:
+                empty_count += 1
             all_entities.extend(entities)
             all_relationships.extend(relationships)
 
         logger.info(
-            f"Extracted {len(all_entities)} entities and "
-            f"{len(all_relationships)} relationships from {len(chunks)} chunks"
+            f"[extract_batch] Done (sequential): "
+            f"{len(all_entities)} entities, {len(all_relationships)} relationships "
+            f"from {len(chunks)} chunks | empty={empty_count}"
         )
         return all_entities, all_relationships
 
@@ -134,22 +180,31 @@ class GraphRAGExtractor:
         # Notebook approach: find first JSON object with regex
         match = re.search(r"\{.*\}", response_str, re.DOTALL)
         if not match:
-            logger.warning(f"No JSON found in response for chunk {chunk_id}")
+            logger.warning(
+                f"[parse] No JSON found for chunk {chunk_id} | "
+                f"raw_response=\"{response_str[:500].replace(chr(10), ' ')}\""
+            )
             return entities, relationships
 
         json_str = match.group(0)
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse error for chunk {chunk_id}: {e}")
+            logger.warning(
+                f"[parse] JSON decode error for chunk {chunk_id}: {e} | "
+                f"json_str=\"{json_str[:500].replace(chr(10), ' ')}\""
+            )
             return entities, relationships
 
-        # Parse entities — notebook field names: entity_name, entity_type, entity_description
-        for e in data.get("entities", []):
+        # Parse entities — notebook field names
+        raw_entities = data.get("entities", [])
+        for e in raw_entities:
             if not isinstance(e, dict):
+                logger.debug(f"[parse] chunk={chunk_id} | skipping non-dict entity: {e}")
                 continue
             name = e.get("entity_name", "").strip()
             if not name:
+                logger.debug(f"[parse] chunk={chunk_id} | skipping entity with empty name: {e}")
                 continue
             entities.append(Entity(
                 name=name,
@@ -158,13 +213,19 @@ class GraphRAGExtractor:
                 source_chunk_ids=[chunk_id],
             ))
 
-        # Parse relationships — notebook field names: source_entity, target_entity, relation, relationship_description
-        for r in data.get("relationships", []):
+        # Parse relationships — notebook field names
+        raw_rels = data.get("relationships", [])
+        for r in raw_rels:
             if not isinstance(r, dict):
+                logger.debug(f"[parse] chunk={chunk_id} | skipping non-dict relationship: {r}")
                 continue
             source = r.get("source_entity", "").strip()
             target = r.get("target_entity", "").strip()
             if not source or not target:
+                logger.debug(
+                    f"[parse] chunk={chunk_id} | skipping relationship with empty "
+                    f"source/target: {r}"
+                )
                 continue
             relationships.append(Relationship(
                 source=source,
@@ -173,5 +234,11 @@ class GraphRAGExtractor:
                 description=r.get("relationship_description", ""),
                 source_chunk_id=chunk_id,
             ))
+
+        logger.debug(
+            f"[parse] chunk={chunk_id} | "
+            f"raw_entities={len(raw_entities)}, parsed={len(entities)} | "
+            f"raw_rels={len(raw_rels)}, parsed={len(relationships)}"
+        )
 
         return entities, relationships

@@ -29,8 +29,14 @@ class CommunityDetector:
         nx_graph = graph_store.to_networkx()
 
         if nx_graph.number_of_nodes() == 0:
-            logger.warning("Empty graph, no communities to detect")
+            logger.warning("[communities] Empty graph, no communities to detect")
             return {}, {}
+
+        logger.debug(
+            f"[communities] Running Leiden on graph: "
+            f"{nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges | "
+            f"max_cluster_size={self.max_cluster_size}"
+        )
 
         # Run hierarchical Leiden
         try:
@@ -46,8 +52,6 @@ class CommunityDetector:
         )
 
         # Build community structures
-        # community_mapping is a list of RBConfigurationVertexPartition results
-        # Each item has .node and .cluster attributes
         community_nodes: Dict[int, List[str]] = {}
         entity_to_community_ids: Dict[str, List[int]] = {}
 
@@ -64,20 +68,23 @@ class CommunityDetector:
             if cluster_id not in entity_to_community_ids[node]:
                 entity_to_community_ids[node].append(cluster_id)
 
+        logger.debug(
+            f"[communities] Leiden result: {len(community_nodes)} clusters | "
+            f"cluster_sizes={[len(v) for v in community_nodes.values()]}"
+        )
+
         # Build Community objects with intra-community relationships
         communities: Dict[int, Community] = {}
         for cid, nodes in community_nodes.items():
             node_set = set(nodes)
             intra_relationships = []
 
-            # Find edges within this community
             for u in nodes:
                 for v in graph_store.get_neighbors(u):
-                    if v in node_set and u < v:  # Avoid duplicates
+                    if v in node_set and u < v:
                         edge_data = graph_store.get_edge_data(u, v)
                         if edge_data:
                             for rel in edge_data.get("relations", []):
-                                # Get display names from entities
                                 src_entity = graph_store.get_entity(u)
                                 tgt_entity = graph_store.get_entity(v)
                                 src_name = src_entity.name if src_entity else u
@@ -90,7 +97,6 @@ class CommunityDetector:
                                     source_chunk_id=rel.get("source_chunk_id", ""),
                                 ))
 
-            # Get display names for entity_names
             entity_names = []
             for n in nodes:
                 entity = graph_store.get_entity(n)
@@ -102,8 +108,14 @@ class CommunityDetector:
                 relationships=intra_relationships,
             )
 
+            logger.debug(
+                f"[communities] Community {cid}: "
+                f"{len(entity_names)} entities={entity_names} | "
+                f"{len(intra_relationships)} intra-edges"
+            )
+
         logger.info(
-            f"Detected {len(communities)} communities from "
+            f"[communities] Detected {len(communities)} communities from "
             f"{nx_graph.number_of_nodes()} nodes"
         )
         return communities, entity_to_community_ids

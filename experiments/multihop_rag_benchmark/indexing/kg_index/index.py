@@ -60,36 +60,53 @@ class GraphRAGIndex:
 
     def build(self, chunks: List[Chunk], show_progress: bool = True) -> None:
         """Build the full GraphRAG index from chunks."""
+        logger.info(
+            f"[build] Starting GraphRAG build: {len(chunks)} chunks | "
+            f"max_paths_per_chunk={self.extractor.max_paths_per_chunk} | "
+            f"num_workers={self.extractor.num_workers} | "
+            f"max_cluster_size={self.community_detector.max_cluster_size}"
+        )
+
         # 1. Extract entities and relationships
-        logger.info("Step 1/5: Extracting entities and relationships...")
+        logger.info("[build] Step 1/5: Extracting entities and relationships...")
         entities, relationships = self.extractor.extract_batch(chunks, show_progress)
+        logger.info(
+            f"[build] Step 1/5 done: {len(entities)} raw entities, "
+            f"{len(relationships)} raw relationships"
+        )
 
         # 2. Populate graph
-        logger.info("Step 2/5: Building graph...")
+        logger.info("[build] Step 2/5: Building graph...")
         for entity in entities:
             self.graph_store.add_entity(entity)
         for rel in relationships:
             self.graph_store.add_relationship(rel)
-        logger.info(f"Graph stats: {self.graph_store.stats}")
+        logger.info(f"[build] Step 2/5 done: {self.graph_store.stats}")
 
         # 3. Detect communities
-        logger.info("Step 3/5: Detecting communities...")
+        logger.info("[build] Step 3/5: Detecting communities...")
         self.communities, self.entity_to_community_ids = (
             self.community_detector.detect(self.graph_store)
         )
+        logger.info(
+            f"[build] Step 3/5 done: {len(self.communities)} communities, "
+            f"{len(self.entity_to_community_ids)} entities mapped"
+        )
 
         # 4. Generate community summaries
-        logger.info("Step 4/5: Generating community summaries...")
+        logger.info("[build] Step 4/5: Generating community summaries...")
         self.communities = self.community_summarizer.summarize(self.communities)
+        summaries_count = sum(1 for c in self.communities.values() if c.summary)
+        logger.info(
+            f"[build] Step 4/5 done: {summaries_count}/{len(self.communities)} "
+            f"communities have summaries"
+        )
 
         # 5. Build entity embeddings
-        logger.info("Step 5/5: Building entity embeddings...")
+        logger.info("[build] Step 5/5: Building entity embeddings...")
         self._build_entity_embeddings()
 
-        logger.info(
-            f"GraphRAG index built: {self.graph_store.stats}, "
-            f"{len(self.communities)} communities"
-        )
+        logger.info(f"[build] GraphRAG index complete: {self.stats}")
 
     def build_cached(
         self,
@@ -124,7 +141,10 @@ class GraphRAGIndex:
         """
         Local search: embed query → find similar entities → return their community summaries.
         """
+        logger.debug(f"[local_search] query=\"{query}\" | top_k={top_k}")
+
         if self._entity_embeddings is None or len(self._entity_keys) == 0:
+            logger.debug("[local_search] No entity embeddings available, returning empty")
             return GraphRAGSearchResult()
 
         # Embed query
@@ -148,9 +168,14 @@ class GraphRAGIndex:
         for idx in top_indices:
             if idx < len(self._entity_keys):
                 entity_key = self._entity_keys[idx]
+                score = float(similarities[idx])
                 entity = self.graph_store.get_entity(entity_key)
                 if entity:
                     matched_entities.append(entity.name)
+                    logger.debug(
+                        f"[local_search] Match: \"{entity.name}\" "
+                        f"(score={score:.4f}, type={entity.entity_type})"
+                    )
                 cids = self.entity_to_community_ids.get(entity_key, [])
                 matched_community_ids.update(cids)
 
@@ -160,6 +185,14 @@ class GraphRAGIndex:
             community = self.communities.get(cid)
             if community and community.summary:
                 summaries.append(community.summary)
+
+        logger.debug(
+            f"[local_search] Result: "
+            f"{len(matched_entities)} entities -> "
+            f"{len(matched_community_ids)} communities -> "
+            f"{len(summaries)} summaries | "
+            f"total_summary_chars={sum(len(s) for s in summaries)}"
+        )
 
         return GraphRAGSearchResult(
             community_summaries=summaries,
@@ -177,6 +210,11 @@ class GraphRAGIndex:
             if community.summary:
                 summaries.append(community.summary)
                 community_ids.append(cid)
+
+        logger.debug(
+            f"[global_search] Returning {len(summaries)} community summaries "
+            f"(total_chars={sum(len(s) for s in summaries)})"
+        )
 
         return GraphRAGSearchResult(
             community_summaries=summaries,
