@@ -1,26 +1,26 @@
 # Default configuration for RAG vs GraphRAG benchmark
 # Based on paper: https://arxiv.org/abs/2502.11371
 
-output_dir: "./benchmark_results"
+output_dir: "./benchmark_results/triplet_vs_vector"
 cache_dir: "./cache"
 
 dataset:
   name: "yixuantt/MultiHopRAG"
-  max_samples: null  # null = use all samples
+  max_samples: 1000  # null = use all samples
 
 # LLM for generation and entity extraction
 llm:
   api_key_env: "OPENAI_API_KEY"
-  api_base: null  # set for OpenAI-compatible API, e.g., "https://api.example.com/v1"
-  model: "gpt-4o-mini"
+  api_base: https://qwen-30b-a3.ai.alfaintra.net/v1  # set for OpenAI-compatible API, e.g., "https://api.example.com/v1"
+  model: "Qwen3-Coder-30B-A3B-Instruct-FP8"
   temperature: 0.0
   max_tokens: 512
 
 # Embedding model
 embedding:
   api_key_env: "OPENAI_API_KEY"
-  api_base: null  # set for OpenAI-compatible API
-  model: "text-embedding-ada-002"
+  api_base: https://litellm-hub.infra.moscow.alfaintra.net/v1  # set for OpenAI-compatible API
+  model: "hosted_vllm/BAAI/bge-m3"
   batch_size: 100
 
 # Vector RAG settings (as in paper)
