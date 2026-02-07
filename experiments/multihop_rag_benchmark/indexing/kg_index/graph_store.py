@@ -203,3 +203,57 @@ class GraphStore:
             )
 
         logger.info(f"[graph] Loaded from {path}: {self.stats}")
+
+    def export_graphml(
+        self,
+        path: Path,
+        community_mapping: dict = None,
+    ) -> None:
+        """Export graph to GraphML format (for Gephi, Cytoscape, yEd, etc.).
+
+        GraphML supports only scalar node/edge attributes, so we flatten:
+        - Node attrs: name, entity_type, description, source_chunks (comma-joined)
+        - Edge attrs: one edge per relation (multi-edges become separate edges)
+        - Optionally: community_id as node attribute
+
+        Args:
+            path: Output .graphml file path.
+            community_mapping: Optional dict {entity_key: [community_ids]}
+                to add community_id as node attribute.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build a fresh MultiDiGraph — one edge per relation
+        export_graph = nx.MultiDiGraph()
+
+        # Add nodes with scalar attributes
+        for key, entity in self._entities.items():
+            attrs = {
+                "label": entity.name,
+                "entity_type": entity.entity_type,
+                "description": entity.description,
+                "source_chunks": ", ".join(entity.source_chunk_ids),
+            }
+            if community_mapping and key in community_mapping:
+                cids = community_mapping[key]
+                attrs["community_id"] = cids[0] if len(cids) == 1 else min(cids)
+                attrs["community_ids"] = ", ".join(str(c) for c in cids)
+            export_graph.add_node(key, **attrs)
+
+        # Add edges — one per relation (flatten the relations list)
+        for u, v, data in self._graph.edges(data=True):
+            for rel in data.get("relations", []):
+                export_graph.add_edge(
+                    u, v,
+                    label=rel.get("relation", "RELATED_TO"),
+                    description=rel.get("description", ""),
+                    source_chunk_id=rel.get("source_chunk_id", ""),
+                )
+
+        nx.write_graphml(export_graph, str(path))
+        logger.info(
+            f"[graph] Exported GraphML to {path}: "
+            f"{export_graph.number_of_nodes()} nodes, "
+            f"{export_graph.number_of_edges()} edges"
+        )

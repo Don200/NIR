@@ -39,3 +39,7 @@ class GraphRAGSearchResult:
     matched_entities: List[str] = field(default_factory=list)
     matched_community_ids: List[int] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Enriched local search: entity descriptions + relationships
+    entity_context: List[str] = field(default_factory=list)
+    # Global map-reduce: extracted points with relevance scores
+    global_search_points: List[Dict[str, Any]] = field(default_factory=list)

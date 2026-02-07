@@ -35,6 +35,8 @@ graphrag:
   max_cluster_size: 10
   local_search_top_k: 10
   num_workers: 4
+  global_search_top_communities: 20   # Pre-filter top-N communities by embedding similarity
+  global_search_min_score: 20         # Min relevance score (0-100) for map-reduce points
 
 # Evaluation settings
 evaluation:

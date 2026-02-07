@@ -103,3 +103,35 @@ Focus on proper nouns, organization names, person names, and specific concepts.
 Question: {query}
 
 Entity names (JSON array):"""
+
+# ---------------------------------------------------------------------------
+# Global search map-reduce — based on Microsoft GraphRAG
+# ---------------------------------------------------------------------------
+
+GLOBAL_SEARCH_MAP_SYSTEM_PROMPT = """\
+---Role---
+You are a helpful assistant responding to questions about data in the provided text."""
+
+GLOBAL_SEARCH_MAP_PROMPT = """\
+---Community Information---
+{context_data}
+
+---Target Question---
+{query}
+
+---Goal---
+Generate a response consisting of a list of key points that responds to the user's question, \
+summarizing all relevant information in the community information above.
+
+You should use the data provided above as the primary context for generating the response. \
+If the provided information does not contain sufficient information to answer the question, \
+just say so. Do not make anything up.
+
+Each key point in the response should have the following elements:
+- Description: A comprehensive description of the point.
+- Importance Score: An integer score between 0-100 that indicates how important the point \
+is in answering the user's question. An 'I don't know' type of response should have a score of 0.
+
+The response **must** be JSON formatted as follows:
+{{"points": [{{"description": "Description of point 1", "score": 62}}, \
+{{"description": "Description of point 2", "score": 45}}]}}"""

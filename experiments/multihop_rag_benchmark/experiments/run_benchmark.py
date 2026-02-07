@@ -119,6 +119,7 @@ def run_benchmark(
     methods: Optional[List[str]] = None,
     use_cache: bool = True,
     force_rebuild: bool = False,
+    export_graphml: bool = False,
 ) -> dict:
     """
     Run the full benchmark.
@@ -180,6 +181,11 @@ def run_benchmark(
             use_cache=use_cache, force_rebuild=force_rebuild
         )
 
+        if export_graphml and graphrag_index:
+            graphml_path = config.output_dir / "knowledge_graph.graphml"
+            graphrag_index.export_graphml(graphml_path)
+            logger.info(f"GraphML exported to {graphml_path}")
+
     # Create retrievers
     retrievers = {}
 
@@ -197,6 +203,8 @@ def run_benchmark(
     if "graphrag_global" in methods and graphrag_index:
         retrievers["graphrag_global"] = GraphRAGGlobalRetriever(
             graphrag_index,
+            top_communities=config.graphrag.global_search_top_communities,
+            min_score=config.graphrag.global_search_min_score,
         )
 
     if "hybrid_selection" in methods and vector_index and graphrag_index:
@@ -313,6 +321,11 @@ def main():
         action="store_true",
         help="Enable DEBUG logging for GraphRAG pipeline (extraction, graph, communities)",
     )
+    parser.add_argument(
+        "--export-graphml",
+        action="store_true",
+        help="Export knowledge graph to GraphML format (output_dir/knowledge_graph.graphml)",
+    )
 
     args = parser.parse_args()
 
@@ -341,6 +354,7 @@ def main():
         methods=args.methods,
         use_cache=not args.no_cache,
         force_rebuild=args.force_rebuild,
+        export_graphml=args.export_graphml,
     )
 
 

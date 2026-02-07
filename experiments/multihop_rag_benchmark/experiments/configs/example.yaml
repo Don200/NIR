@@ -56,6 +56,8 @@ graphrag:
   max_cluster_size: 10       # Leiden параметр
   local_search_top_k: 10    # Top-K сущностей для local search
   num_workers: 4             # Параллельных LLM-вызовов при extraction
+  global_search_top_communities: 20   # Pre-filter top-N communities для global search
+  global_search_min_score: 20         # Мин. релевантность (0-100) для map-reduce точек
 
 # -----------------------------------------------------------------------------
 # Настройки оценки

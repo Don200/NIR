@@ -3,8 +3,10 @@
 import hashlib
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -58,6 +60,10 @@ class GraphRAGIndex:
         self._entity_keys: List[str] = []
         self._entity_embeddings: Optional[np.ndarray] = None
 
+        # Community summary embeddings for global search pre-filtering
+        self._community_keys: List[int] = []
+        self._community_embeddings: Optional[np.ndarray] = None
+
     def build(self, chunks: List[Chunk], show_progress: bool = True) -> None:
         """Build the full GraphRAG index from chunks."""
         logger.info(
@@ -68,43 +74,47 @@ class GraphRAGIndex:
         )
 
         # 1. Extract entities and relationships
-        logger.info("[build] Step 1/5: Extracting entities and relationships...")
+        logger.info("[build] Step 1/6: Extracting entities and relationships...")
         entities, relationships = self.extractor.extract_batch(chunks, show_progress)
         logger.info(
-            f"[build] Step 1/5 done: {len(entities)} raw entities, "
+            f"[build] Step 1/6 done: {len(entities)} raw entities, "
             f"{len(relationships)} raw relationships"
         )
 
         # 2. Populate graph
-        logger.info("[build] Step 2/5: Building graph...")
+        logger.info("[build] Step 2/6: Building graph...")
         for entity in entities:
             self.graph_store.add_entity(entity)
         for rel in relationships:
             self.graph_store.add_relationship(rel)
-        logger.info(f"[build] Step 2/5 done: {self.graph_store.stats}")
+        logger.info(f"[build] Step 2/6 done: {self.graph_store.stats}")
 
         # 3. Detect communities
-        logger.info("[build] Step 3/5: Detecting communities...")
+        logger.info("[build] Step 3/6: Detecting communities...")
         self.communities, self.entity_to_community_ids = (
             self.community_detector.detect(self.graph_store)
         )
         logger.info(
-            f"[build] Step 3/5 done: {len(self.communities)} communities, "
+            f"[build] Step 3/6 done: {len(self.communities)} communities, "
             f"{len(self.entity_to_community_ids)} entities mapped"
         )
 
         # 4. Generate community summaries
-        logger.info("[build] Step 4/5: Generating community summaries...")
+        logger.info("[build] Step 4/6: Generating community summaries...")
         self.communities = self.community_summarizer.summarize(self.communities)
         summaries_count = sum(1 for c in self.communities.values() if c.summary)
         logger.info(
-            f"[build] Step 4/5 done: {summaries_count}/{len(self.communities)} "
+            f"[build] Step 4/6 done: {summaries_count}/{len(self.communities)} "
             f"communities have summaries"
         )
 
         # 5. Build entity embeddings
-        logger.info("[build] Step 5/5: Building entity embeddings...")
+        logger.info("[build] Step 5/6: Building entity embeddings...")
         self._build_entity_embeddings()
+
+        # 6. Build community summary embeddings (for global search pre-filtering)
+        logger.info("[build] Step 6/6: Building community summary embeddings...")
+        self._build_community_embeddings()
 
         logger.info(f"[build] GraphRAG index complete: {self.stats}")
 
@@ -139,7 +149,10 @@ class GraphRAGIndex:
 
     def local_search(self, query: str, top_k: int = 10) -> GraphRAGSearchResult:
         """
-        Local search: embed query → find similar entities → return their community summaries.
+        Local search: embed query → find similar entities → return entity context + community summaries.
+
+        Returns enriched context: entity descriptions, relationships, AND community summaries.
+        This matches MS GraphRAG local search which returns entities + relations + community reports.
         """
         logger.debug(f"[local_search] query=\"{query}\" | top_k={top_k}")
 
@@ -162,8 +175,9 @@ class GraphRAGIndex:
         similarities = normalized @ query_embedding
         top_indices = np.argsort(similarities)[-top_k:][::-1]
 
-        # Map to community IDs
+        # Map to entities and communities
         matched_entities = []
+        matched_entity_keys = []
         matched_community_ids = set()
         for idx in top_indices:
             if idx < len(self._entity_keys):
@@ -172,12 +186,16 @@ class GraphRAGIndex:
                 entity = self.graph_store.get_entity(entity_key)
                 if entity:
                     matched_entities.append(entity.name)
+                    matched_entity_keys.append(entity_key)
                     logger.debug(
                         f"[local_search] Match: \"{entity.name}\" "
                         f"(score={score:.4f}, type={entity.entity_type})"
                     )
                 cids = self.entity_to_community_ids.get(entity_key, [])
                 matched_community_ids.update(cids)
+
+        # Build enriched entity context (descriptions + relationships)
+        entity_context = self._build_entity_context(matched_entity_keys)
 
         # Collect community summaries
         summaries = []
@@ -189,6 +207,7 @@ class GraphRAGIndex:
         logger.debug(
             f"[local_search] Result: "
             f"{len(matched_entities)} entities -> "
+            f"{len(entity_context)} entity contexts -> "
             f"{len(matched_community_ids)} communities -> "
             f"{len(summaries)} summaries | "
             f"total_summary_chars={sum(len(s) for s in summaries)}"
@@ -198,29 +217,92 @@ class GraphRAGIndex:
             community_summaries=summaries,
             matched_entities=matched_entities,
             matched_community_ids=sorted(matched_community_ids),
+            entity_context=entity_context,
             metadata={"top_k": top_k, "search_type": "local"},
         )
 
-    def global_search(self) -> GraphRAGSearchResult:
-        """Global search: return all community summaries."""
-        summaries = []
-        community_ids = []
-        for cid in sorted(self.communities.keys()):
-            community = self.communities[cid]
-            if community.summary:
-                summaries.append(community.summary)
-                community_ids.append(cid)
+    def global_search(
+        self,
+        query: str,
+        top_communities: int = 20,
+        min_score: int = 20,
+    ) -> GraphRAGSearchResult:
+        """
+        Global search with map-reduce (based on Microsoft GraphRAG).
 
+        1. Pre-filter communities by embedding similarity to the query.
+        2. Map phase: for each community, LLM extracts relevant points with scores.
+        3. Filter by min_score, sort by relevance.
+        4. Return top points as context.
+        """
         logger.debug(
-            f"[global_search] Returning {len(summaries)} community summaries "
-            f"(total_chars={sum(len(s) for s in summaries)})"
+            f"[global_search] query=\"{query}\" | "
+            f"top_communities={top_communities} | min_score={min_score}"
         )
 
+        if not self.communities:
+            return GraphRAGSearchResult()
+
+        # Pre-filter communities by embedding similarity
+        if self._community_embeddings is not None and len(self._community_keys) > 0:
+            query_embedding = np.array(self.embedding_client.embed_single(query))
+
+            norms = np.linalg.norm(self._community_embeddings, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1, norms)
+            normalized = self._community_embeddings / norms
+
+            query_norm = np.linalg.norm(query_embedding)
+            if query_norm > 0:
+                query_embedding = query_embedding / query_norm
+
+            similarities = normalized @ query_embedding
+            n = min(top_communities, len(self._community_keys))
+            top_indices = np.argsort(similarities)[-n:][::-1]
+
+            filtered_cids = [self._community_keys[i] for i in top_indices]
+            logger.debug(
+                f"[global_search] Pre-filtered to {len(filtered_cids)} communities "
+                f"by embedding similarity"
+            )
+        else:
+            # Fallback: use all communities
+            filtered_cids = sorted(self.communities.keys())
+            logger.debug(
+                f"[global_search] No community embeddings, using all "
+                f"{len(filtered_cids)} communities"
+            )
+
+        # Map phase: extract relevant points from each community
+        all_points = self._map_communities_parallel(query, filtered_cids)
+
+        # Filter by score and sort
+        relevant_points = [p for p in all_points if p.get("score", 0) >= min_score]
+        relevant_points.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        logger.debug(
+            f"[global_search] Map result: {len(all_points)} total points, "
+            f"{len(relevant_points)} above threshold ({min_score})"
+        )
+
+        # Build context from top points
+        context_texts = [
+            p["description"] for p in relevant_points if p.get("description")
+        ]
+        community_ids = sorted(set(
+            p.get("community_id", -1) for p in relevant_points
+            if p.get("community_id", -1) >= 0
+        ))
+
         return GraphRAGSearchResult(
-            community_summaries=summaries,
-            matched_entities=[],
+            community_summaries=context_texts,
             matched_community_ids=community_ids,
-            metadata={"search_type": "global"},
+            global_search_points=relevant_points,
+            metadata={
+                "search_type": "global_map_reduce",
+                "total_communities_checked": len(filtered_cids),
+                "total_points_extracted": len(all_points),
+                "points_above_threshold": len(relevant_points),
+            },
         )
 
     def save(self, path: Path) -> None:
@@ -261,6 +343,12 @@ class GraphRAGIndex:
             np.save(str(path / "entity_embeddings.npy"), self._entity_embeddings)
             with open(path / "entity_keys.json", "w", encoding="utf-8") as f:
                 json.dump(self._entity_keys, f)
+
+        # Save community summary embeddings
+        if self._community_embeddings is not None:
+            np.save(str(path / "community_embeddings.npy"), self._community_embeddings)
+            with open(path / "community_keys.json", "w", encoding="utf-8") as f:
+                json.dump(self._community_keys, f)
 
         logger.info(f"GraphRAG index saved to {path}")
 
@@ -313,11 +401,29 @@ class GraphRAGIndex:
                 with open(keys_path, "r", encoding="utf-8") as f:
                     self._entity_keys = json.load(f)
 
+            # Load community summary embeddings
+            comm_emb_path = path / "community_embeddings.npy"
+            comm_keys_path = path / "community_keys.json"
+            if comm_emb_path.exists() and comm_keys_path.exists():
+                self._community_embeddings = np.load(str(comm_emb_path))
+                with open(comm_keys_path, "r", encoding="utf-8") as f:
+                    self._community_keys = json.load(f)
+
             logger.info(f"GraphRAG index loaded from {path}")
             return True
         except Exception as e:
             logger.error(f"Failed to load GraphRAG index: {e}")
             return False
+
+    def export_graphml(self, path: Path) -> None:
+        """Export the knowledge graph to GraphML format.
+
+        Includes community_id as node attribute if communities have been built.
+        """
+        self.graph_store.export_graphml(
+            path,
+            community_mapping=self.entity_to_community_ids or None,
+        )
 
     @property
     def stats(self) -> dict:
@@ -326,10 +432,55 @@ class GraphRAGIndex:
             **self.graph_store.stats,
             "num_communities": len(self.communities),
             "num_entity_embeddings": len(self._entity_keys),
+            "num_community_embeddings": len(self._community_keys),
             "communities_with_summaries": sum(
                 1 for c in self.communities.values() if c.summary
             ),
         }
+
+    def _build_entity_context(self, entity_keys: List[str]) -> List[str]:
+        """Build rich entity context with descriptions and relationships.
+
+        For each entity, produces a block like:
+            Entity: Tim Cook (Person)
+            Description: CEO of Apple Inc., appointed in 2011...
+            Relationships:
+              - Tim Cook -> Apple Inc. [CEO_OF]: Leads Apple as CEO
+              - Tim Cook -> iPhone 15 [ANNOUNCED]: Presented at 2023 keynote
+        """
+        contexts = []
+        for entity_key in entity_keys:
+            entity = self.graph_store.get_entity(entity_key)
+            if not entity:
+                continue
+
+            lines = [f"Entity: {entity.name} ({entity.entity_type})"]
+            if entity.description:
+                lines.append(f"Description: {entity.description}")
+
+            # Gather relationships
+            neighbors = self.graph_store.get_neighbors(entity_key)
+            rel_lines = []
+            for neighbor_key in neighbors:
+                edge_data = self.graph_store.get_edge_data(entity_key, neighbor_key)
+                if not edge_data:
+                    continue
+                for rel in edge_data.get("relations", []):
+                    neighbor_entity = self.graph_store.get_entity(neighbor_key)
+                    neighbor_name = neighbor_entity.name if neighbor_entity else neighbor_key
+                    rel_label = rel.get("relation", "RELATED_TO")
+                    desc = rel.get("description", "")
+                    rel_lines.append(
+                        f"  - {entity.name} -> {neighbor_name} [{rel_label}]: {desc}"
+                    )
+
+            if rel_lines:
+                lines.append("Relationships:")
+                lines.extend(rel_lines)
+
+            contexts.append("\n".join(lines))
+
+        return contexts
 
     def _build_entity_embeddings(self) -> None:
         """Build embeddings for all entity descriptions."""
@@ -347,6 +498,110 @@ class GraphRAGIndex:
         logger.info(f"Embedding {len(descriptions)} entity descriptions...")
         embeddings = self.embedding_client.embed(descriptions)
         self._entity_embeddings = np.array(embeddings, dtype=np.float32)
+
+    def _build_community_embeddings(self) -> None:
+        """Build embeddings for community summaries (used for global search pre-filtering)."""
+        summaries = []
+        keys = []
+        for cid in sorted(self.communities.keys()):
+            community = self.communities[cid]
+            if community.summary:
+                keys.append(cid)
+                summaries.append(community.summary)
+
+        if not summaries:
+            self._community_keys = []
+            self._community_embeddings = None
+            return
+
+        logger.info(f"Embedding {len(summaries)} community summaries...")
+        embeddings = self.embedding_client.embed(summaries)
+        self._community_keys = keys
+        self._community_embeddings = np.array(embeddings, dtype=np.float32)
+
+    def _map_community_points(
+        self, query: str, community_id: int, summary: str
+    ) -> List[dict]:
+        """Map phase: extract relevant points with scores from a single community."""
+        from .prompts import GLOBAL_SEARCH_MAP_SYSTEM_PROMPT, GLOBAL_SEARCH_MAP_PROMPT
+
+        prompt = GLOBAL_SEARCH_MAP_PROMPT.format(
+            context_data=summary,
+            query=query,
+        )
+
+        try:
+            response = self.llm_client.generate(
+                prompt=prompt,
+                system_prompt=GLOBAL_SEARCH_MAP_SYSTEM_PROMPT,
+                max_tokens=512,
+            )
+
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                points = data.get("points", [])
+                valid_points = []
+                for p in points:
+                    if isinstance(p, dict) and "description" in p:
+                        p["community_id"] = community_id
+                        p["score"] = int(p.get("score", 0))
+                        valid_points.append(p)
+                logger.debug(
+                    f"[global_search] Map community {community_id}: "
+                    f"{len(valid_points)} points extracted"
+                )
+                return valid_points
+            else:
+                logger.debug(
+                    f"[global_search] Map community {community_id}: "
+                    f"no JSON found in response"
+                )
+                return []
+        except Exception as e:
+            logger.warning(
+                f"[global_search] Map failed for community {community_id}: {e}"
+            )
+            return []
+
+    def _map_communities_parallel(
+        self, query: str, community_ids: List[int]
+    ) -> List[dict]:
+        """Run map phase in parallel across communities."""
+        work_items = []
+        for cid in community_ids:
+            community = self.communities.get(cid)
+            if community and community.summary:
+                work_items.append((cid, community.summary))
+
+        if not work_items:
+            return []
+
+        all_points = []
+        logger.debug(
+            f"[global_search] Map phase: {len(work_items)} communities, "
+            f"{self.extractor.num_workers} workers"
+        )
+
+        with ThreadPoolExecutor(max_workers=self.extractor.num_workers) as executor:
+            futures = {}
+            for cid, summary in work_items:
+                future = executor.submit(
+                    self._map_community_points, query, cid, summary
+                )
+                futures[future] = cid
+
+            for future in as_completed(futures):
+                cid = futures[future]
+                try:
+                    points = future.result()
+                    all_points.extend(points)
+                except Exception as e:
+                    logger.warning(
+                        f"[global_search] Map failed for community {cid}: {e}"
+                    )
+
+        return all_points
 
     def _compute_fingerprint(self, chunks: List[Chunk]) -> str:
         """Compute a fingerprint for cache invalidation."""

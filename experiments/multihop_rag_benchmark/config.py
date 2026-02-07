@@ -55,6 +55,9 @@ class GraphRAGConfig:
     max_cluster_size: int = 10
     local_search_top_k: int = 10
     num_workers: int = 4
+    # Global search map-reduce parameters
+    global_search_top_communities: int = 20
+    global_search_min_score: int = 20
 
 
 @dataclass
@@ -174,6 +177,8 @@ def save_config(config: BenchmarkConfig, path: Path) -> None:
             "max_cluster_size": config.graphrag.max_cluster_size,
             "local_search_top_k": config.graphrag.local_search_top_k,
             "num_workers": config.graphrag.num_workers,
+            "global_search_top_communities": config.graphrag.global_search_top_communities,
+            "global_search_min_score": config.graphrag.global_search_min_score,
         },
         "evaluation": {
             "normalize_answers": config.evaluation.normalize_answers,

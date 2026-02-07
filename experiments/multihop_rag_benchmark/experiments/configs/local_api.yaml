@@ -45,6 +45,8 @@ graphrag:
   max_cluster_size: 10
   local_search_top_k: 10
   num_workers: 4
+  global_search_top_communities: 20
+  global_search_min_score: 20
 
 evaluation:
   normalize_answers: true
