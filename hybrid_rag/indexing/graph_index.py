@@ -262,14 +262,25 @@ class GraphIndex:
             return True
         return (self.persist_dir / "index_store.json").exists()
 
-    def get_triplets_sample(self, limit: int = 10) -> list[tuple[str, str, str]]:
-        """Get sample of triplets from graph (for debugging)."""
+    def _all_triplets(self):
+        """Return all triplets as (EntityNode, Relation, EntityNode) tuples.
+
+        Uses ``gs.graph.get_triplets()`` directly because the outer
+        ``SimplePropertyGraphStore.get_triplets()`` returns an empty list when
+        called without filter arguments in current LlamaIndex versions.
+        """
         if self._index is None:
             return []
+        gs = self._index.property_graph_store
+        inner = getattr(gs, "graph", None)
+        if inner is not None and hasattr(inner, "get_triplets"):
+            return inner.get_triplets()
+        return gs.get_triplets()
 
+    def get_triplets_sample(self, limit: int = 10) -> list[tuple[str, str, str]]:
+        """Get sample of triplets from graph (for debugging)."""
         try:
-            graph_store = self._index.property_graph_store
-            triplets = graph_store.get_triplets()
+            triplets = self._all_triplets()
             return [
                 (t[0].id, t[1].label, t[2].id)
                 for t in triplets[:limit]
@@ -279,39 +290,36 @@ class GraphIndex:
             return []
 
     def get_graph_data(self, limit: int = 100) -> dict:
-        """Get graph data for visualization (nodes + edges)."""
-        if self._index is None:
-            return {"nodes": [], "edges": []}
+        """Get graph data for visualization (nodes + edges).
 
+        Node ``label`` is the entity name (e.g. ``"diagonal Latin square"``);
+        ``properties.type`` carries the LabelledNode label (e.g. ``"LATIN_SQUARE_TYPE"``)
+        so the UI can colour-code by ontology type.
+        """
         try:
-            graph_store = self._index.property_graph_store
-            triplets = graph_store.get_triplets()[:limit]
+            triplets = self._all_triplets()[:limit]
 
-            nodes_dict = {}
-            edges = []
+            nodes_dict: dict = {}
+            edges: list = []
 
-            for triplet in triplets:
-                subject, relation, obj = triplet[0], triplet[1], triplet[2]
-
-                if subject.id not in nodes_dict:
-                    nodes_dict[subject.id] = {
-                        "id": subject.id,
-                        "label": subject.label or subject.id,
-                        "properties": getattr(subject, "properties", {}),
-                    }
-
-                if obj.id not in nodes_dict:
-                    nodes_dict[obj.id] = {
-                        "id": obj.id,
-                        "label": obj.label or obj.id,
-                        "properties": getattr(obj, "properties", {}),
+            for subject, relation, obj in triplets:
+                for node in (subject, obj):
+                    nid = node.id
+                    if nid in nodes_dict:
+                        continue
+                    props = dict(getattr(node, "properties", {}) or {})
+                    props["type"] = node.label
+                    nodes_dict[nid] = {
+                        "id": nid,
+                        "label": getattr(node, "name", None) or nid,
+                        "properties": props,
                     }
 
                 edges.append({
                     "source": subject.id,
                     "target": obj.id,
                     "label": relation.label,
-                    "properties": getattr(relation, "properties", {}),
+                    "properties": dict(getattr(relation, "properties", {}) or {}),
                 })
 
             return {
