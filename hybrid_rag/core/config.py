@@ -116,9 +116,15 @@ class VectorConfig:
 @dataclass
 class GraphConfig:
     """Graph index configuration."""
+    extractor: str = "simple"
     max_triplets_per_chunk: int = 10
     include_embeddings: bool = True
     similarity_top_k: int = 10
+    num_workers: int = 4
+    request_timeout: float = 60.0
+    allowed_entity_types: list[str] = field(default_factory=list)
+    allowed_relation_types: list[str] = field(default_factory=list)
+    extract_prompt: Optional[str] = None
 
 
 @dataclass
@@ -138,6 +144,7 @@ class Config:
 
     # Paths
     index_dir: Path = field(default_factory=lambda: Path("./indexes"))
+    source_titles_path: Optional[Path] = None
 
     # Server
     api_host: str = "0.0.0.0"

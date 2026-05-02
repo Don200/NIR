@@ -6,9 +6,9 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8000"
+      - "18080:8000"
     volumes:
-      - ./indexes:/app/indexes
+      - ../indexes_nova_ocr_sample20_dynamic_v2_eval_graph_embeddings:/app/indexes
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}

@@ -12,7 +12,10 @@ from llama_index.core import (
     Settings,
 )
 from llama_index.core.graph_stores import SimplePropertyGraphStore
-from llama_index.core.indices.property_graph import SimpleLLMPathExtractor
+from llama_index.core.indices.property_graph import (
+    DynamicLLMPathExtractor,
+    SimpleLLMPathExtractor,
+)
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
 
@@ -22,6 +25,79 @@ from ..core.config import Config
 from ..core.models import Document, SearchResult, RetrievalMethod
 
 logger = logging.getLogger(__name__)
+
+
+LATIN_SQUARE_DYNAMIC_EXTRACT_PROMPT = """
+Извлеки из текста не более {max_knowledge_triplets} качественных триплетов знаний.
+
+ИСХОДНАЯ ОНТОЛОГИЯ:
+Типы сущностей: {allowed_entity_types}
+Типы отношений: {allowed_relation_types}
+
+Извлекай только математически содержательные сущности и отношения,
+полезные для исследования латинских квадратов.
+Используй только типы сущностей и типы отношений из ИСХОДНОЙ ОНТОЛОГИИ.
+Если факт не укладывается в онтологию, пропусти его вместо того,
+чтобы придумывать новый тип сущности или отношения.
+Не извлекай авторов, организации, адреса электронной почты, имена файлов,
+URL, библиографические ссылки, колонтитулы страниц, общие слова,
+сырые фрагменты формул, фрагменты табличной разметки и OCR-артефакты.
+Не используй аббревиатуры как имена сущностей, если известна нормализованная форма.
+
+Нормализуй распространённые аббревиатуры:
+- LS -> Latin square
+- DLS -> diagonal Latin square
+- ODLS -> orthogonal diagonal Latin square
+- MOLS -> mutually orthogonal Latin squares
+- DLX -> dancing links algorithm
+
+Каждый триплет должен напрямую подтверждаться текстом.
+
+Верни только валидный JSON:
+[
+  {{"head": "", "head_type": "", "relation": "", "tail": "", "tail_type": ""}}
+]
+
+Текст:
+{text}
+
+Ответ:
+"""
+
+DEFAULT_LATIN_SQUARE_ENTITY_TYPES = [
+    "COMBINATORIAL_OBJECT",
+    "LATIN_SQUARE_TYPE",
+    "ORTHOGONALITY_OBJECT",
+    "TRANSVERSAL_OBJECT",
+    "NUMERICAL_CHARACTERISTIC",
+    "ENUMERATION_SEQUENCE",
+    "ALGORITHM",
+    "COMPUTATIONAL_PROBLEM",
+    "REDUCTION_TARGET",
+    "COMPUTING_PLATFORM",
+    "CONSTRAINT",
+    "THEORETICAL_RESULT",
+]
+
+DEFAULT_LATIN_SQUARE_RELATION_TYPES = [
+    "IS_A",
+    "SPECIAL_CASE_OF",
+    "GENERALIZES",
+    "DEFINED_AS",
+    "HAS_CONSTRAINT",
+    "HAS_PROPERTY",
+    "MEASURED_BY",
+    "COUNTED_BY",
+    "HAS_ENUMERATION_SEQUENCE",
+    "ORTHOGONAL_TO",
+    "USES_METHOD",
+    "REDUCED_TO",
+    "SOLVED_BY",
+    "CONSTRAINED_BY",
+    "EQUIVALENT_TO",
+    "PROVES_CONDITION_FOR",
+    "COMPUTED_ON",
+]
 
 
 class GraphIndex:
@@ -46,6 +122,7 @@ class GraphIndex:
             api_key=self.config.llm.api_key,
             api_base=self.config.llm.base_url,
             temperature=self.config.llm.temperature,
+            timeout=self.config.graph.request_timeout,
             is_chat_model=True,
         )
 
@@ -77,11 +154,7 @@ class GraphIndex:
 
         logger.info(f"Building graph index from {len(llama_docs)} documents")
 
-        kg_extractor = SimpleLLMPathExtractor(
-            llm=Settings.llm,
-            max_paths_per_chunk=self.config.graph.max_triplets_per_chunk,
-            num_workers=4,
-        )
+        kg_extractor = self._create_kg_extractor()
 
         self._index = PropertyGraphIndex.from_documents(
             llama_docs,
@@ -98,6 +171,43 @@ class GraphIndex:
             return len(graph_store.get_triplets())
         except Exception:
             return len(llama_docs)
+
+    def _create_kg_extractor(self):
+        """Create the configured LlamaIndex KG extractor."""
+        extractor = self.config.graph.extractor.lower()
+
+        if extractor == "simple":
+            return SimpleLLMPathExtractor(
+                llm=Settings.llm,
+                max_paths_per_chunk=self.config.graph.max_triplets_per_chunk,
+                num_workers=self.config.graph.num_workers,
+            )
+
+        if extractor == "dynamic":
+            allowed_entity_types = (
+                self.config.graph.allowed_entity_types
+                or DEFAULT_LATIN_SQUARE_ENTITY_TYPES
+            )
+            allowed_relation_types = (
+                self.config.graph.allowed_relation_types
+                or DEFAULT_LATIN_SQUARE_RELATION_TYPES
+            )
+            return DynamicLLMPathExtractor(
+                llm=Settings.llm,
+                extract_prompt=(
+                    self.config.graph.extract_prompt
+                    or LATIN_SQUARE_DYNAMIC_EXTRACT_PROMPT
+                ),
+                max_triplets_per_chunk=self.config.graph.max_triplets_per_chunk,
+                num_workers=self.config.graph.num_workers,
+                allowed_entity_types=allowed_entity_types,
+                allowed_relation_types=allowed_relation_types,
+            )
+
+        raise ValueError(
+            f"Unsupported graph extractor '{self.config.graph.extractor}'. "
+            "Expected 'simple' or 'dynamic'."
+        )
 
     def load(self) -> bool:
         """Load index from disk."""
