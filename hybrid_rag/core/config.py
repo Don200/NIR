@@ -153,7 +153,7 @@ class Config:
 
     # Paths
     index_dir: Path = field(default_factory=lambda: Path("./indexes"))
-    source_titles_path: Optional[Path] = None
+    metadata_json: Optional[Path] = None
 
     # Server
     api_host: str = "0.0.0.0"
@@ -189,6 +189,8 @@ def load_config(path: Optional[Path] = None) -> Config:
 
     if "index_dir" in data:
         config.index_dir = Path(data["index_dir"])
+    if "metadata_json" in data and data["metadata_json"]:
+        config.metadata_json = Path(data["metadata_json"])
     if "api_host" in data:
         config.api_host = data["api_host"]
     if "api_port" in data:

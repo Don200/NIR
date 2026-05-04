@@ -4,6 +4,8 @@
 
 Архитектура системы основана на подходе, описанном в статье [RAG vs. GraphRAG: A Systematic Evaluation and Key Insights](https://arxiv.org/abs/2502.11371v1) (Han et al., 2025). Авторы показывают, что RAG и GraphRAG обладают взаимодополняющими сильными сторонами: векторный RAG лучше работает на вопросах, где ответ содержится в одном фрагменте текста, тогда как GraphRAG эффективнее на multi-hop вопросах, требующих рассуждений по цепочкам связей между сущностями. Гибридная интеграция обоих подходов позволяет улучшить результаты на задачах, где ни один из методов не доминирует в одиночку.
 
+
+
 ![Архитектура RAG и GraphRAG (Han et al., 2025)](docs/architecture.png)
 
 *Figure 1 из (Han et al., 2025): иллюстрация RAG, KG-based GraphRAG и Community-based GraphRAG. В данной реализации используются ветки RAG (верхняя) и KG-GraphRAG (Triplets+Text).*
@@ -144,3 +146,33 @@ docker compose up -d
 ## Ссылки
 
 - Han, H., Shomer, H., Wang, Y., Lei, Y., Guo, K., Hua, Z., Long, B., Liu, H., & Tang, J. (2025). *RAG vs. GraphRAG: A Systematic Evaluation and Key Insights*. arXiv:2502.11371. https://arxiv.org/abs/2502.11371
+
+
+
+1. «Какие методы использует алгоритм dancing links и какие задачи он решает?»
+  - 10 разных документов в выдаче, плотный куст связей.
+  - Граф-путь: dancing links → USES_METHOD → backtracking / exact cover / transversal search, dancing links → SOLVED_BY
+  → enumeration of DLS / ortho DLS search / intercalate count.
+  - Демо-эффект: один алгоритм объединяет работы Зайкина, Ватутина и слайды Тулы 2019 — vector RAG так не сошьёт.
+
+  2. «Какая связь между транзверсалями и алгоритмом DLX?»
+  - 5 документов. Нативный 2-хоп: transversal → USED_IN → DLX плюс dancing_links → IS_A → DLX, т.е. система должна
+  догадаться что DLX = dancing links и связать с транзверсалями.
+  - Это прям эталонный multi-hop вопрос для слайда «зачем нам граф».
+
+  3. «Чем ESODLS отличается от SODLS и какие OEIS-последовательности их перечисляют?»
+  - 2 источника (zaikin4.md, dls_nscf2019_slides.md), но триплеты идеальные:
+    - SODLS → SPECIAL_CASE_OF → ESODLS
+    - ESODLS → COUNTED_BY → A309210 / A309598 / A309599
+  - Демо: иерархия классов + конкретные номера OEIS-последовательностей подтянуты в один ответ — наглядно.
+
+  4. «Как задача поиска ортогональных ДЛК сводится к SAT?»
+  - 3 источника (evatutin_cms_and_sat.md, zaikin4.md, evatutin_brown_dls_sp_2_10.md).
+  - Multi-hop: ortho DLS → REDUCED_TO → SAT → SOLVED_BY → SAT-solver / SAT@home.
+  - Хорошо ляжет под фразу «гибридный подход к комбинаторному поиску».
+
+  5. «Какая связь между функцией Эйлера φ(N) и количеством циклических латинских квадратов?»
+  - Один документ (evatutin_ls_euler_func.md), но триплет точный: Euler's totient function φ(N) → COUNTED_BY → number of
+   valid cyclic LS of order N + cyclic LS → HAS_ENUMERATION_SEQUENCE → φ(N) / A000010 / A338522.
+  - Хорош как «легкий» открывающий пример: математически элегантный, ответ из одного источника, но именно с подсветкой
+  формальной связи через триплет.

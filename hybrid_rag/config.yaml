@@ -28,6 +28,7 @@ generation:
 
 # Paths
 index_dir: "./indexes"
+metadata_json: "data/documents_pdf/latin_squares.json"  # display_title/authors/citation/topic per source stem
 
 # Server
 api_host: "0.0.0.0"

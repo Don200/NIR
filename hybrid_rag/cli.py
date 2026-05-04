@@ -14,6 +14,7 @@ from .core.config import Config, load_config
 from .core.models import Document
 from .indexing.vector_index import VectorIndex
 from .indexing.graph_index import GraphIndex
+from .scripts.enrich_metadata import build_mapping
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +72,9 @@ def cmd_index(args: argparse.Namespace) -> int:
     if args.output:
         config.index_dir = Path(args.output)
 
+    if args.metadata_json:
+        config.metadata_json = Path(args.metadata_json)
+
     # Load documents
     input_path = Path(args.input)
     if not input_path.exists():
@@ -83,6 +87,24 @@ def cmd_index(args: argparse.Namespace) -> int:
         return 1
 
     logger.info(f"Loaded {len(documents)} documents")
+
+    if config.metadata_json:
+        if not config.metadata_json.exists():
+            logger.error(f"metadata_json not found: {config.metadata_json}")
+            return 1
+        mapping = build_mapping(config.metadata_json)
+        logger.info(f"Loaded {len(mapping)} stem -> metadata mappings")
+        enriched = 0
+        for doc in documents:
+            stem_keys = (doc.id, Path(doc.title or "").stem)
+            extra = next(
+                (mapping[k] for k in stem_keys if k and k in mapping),
+                None,
+            )
+            if extra:
+                doc.metadata.update(extra)
+                enriched += 1
+        logger.info(f"Enriched metadata for {enriched}/{len(documents)} documents")
 
     # Index
     if args.type in ("vector", "all"):
@@ -176,6 +198,11 @@ def main() -> int:
         choices=["vector", "graph", "all"],
         default="all",
         help="Index type to build",
+    )
+    index_parser.add_argument(
+        "--metadata-json",
+        help="Path to source-metadata JSON (overrides config.metadata_json). "
+             "Adds display_title/authors/citation/topic to each document.",
     )
 
     status_parser = subparsers.add_parser("status", help="Check index status")
