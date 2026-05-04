@@ -96,13 +96,21 @@ class LLMConfig:
 @dataclass
 class EmbeddingConfig:
     """Embedding model configuration."""
-    model: str = "text-embedding-3-small"
+    model: str = ""
     api_key: Optional[str] = None
     base_url: str = "https://api.openai.com/v1"
 
     def __post_init__(self):
         self.api_key = self.api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = os.getenv("OPENAI_BASE_URL", self.base_url)
+        if not self.model:
+            raise ValueError(
+                "embedding.model is required and must be set explicitly in "
+                "config.yaml (e.g. 'baai/bge-m3' or 'text-embedding-3-small'). "
+                "Implicit defaults were removed because mismatched models cause "
+                "Chroma dimension clashes (e.g. 1024 vs 1536) on upsert. "
+                "Pass --config <path/to/config.yaml> to the CLI."
+            )
 
 
 @dataclass
@@ -111,6 +119,7 @@ class VectorConfig:
     chunk_size: int = 1500  # tokens
     chunk_overlap: int = 300  # ~20% overlap
     top_k: int = 10
+    min_chunk_chars: int = 0  # drop chunks shorter than this (0 = disabled)
 
 
 @dataclass
@@ -153,25 +162,31 @@ class Config:
 
 
 def load_config(path: Optional[Path] = None) -> Config:
-    """Load configuration from YAML file or use defaults."""
+    """Load configuration from a YAML file. A path is required."""
     if path is None:
-        return Config()
+        raise ValueError(
+            "load_config requires a config path. Pass --config <path/to/config.yaml> "
+            "to the CLI. Implicit defaults were removed to prevent silent embedding "
+            "model mismatches (which cause Chroma dimension clashes on upsert)."
+        )
 
     with open(path) as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
 
-    config = Config()
+    embedding = EmbeddingConfig(**data.get("embedding", {}))
+    llm = LLMConfig(**data.get("llm", {}))
+    vector = VectorConfig(**data.get("vector", {}))
+    graph = GraphConfig(**data.get("graph", {}))
+    generation = GenerationConfig(**data.get("generation", {}))
 
-    if "llm" in data:
-        config.llm = LLMConfig(**data["llm"])
-    if "embedding" in data:
-        config.embedding = EmbeddingConfig(**data["embedding"])
-    if "vector" in data:
-        config.vector = VectorConfig(**data["vector"])
-    if "graph" in data:
-        config.graph = GraphConfig(**data["graph"])
-    if "generation" in data:
-        config.generation = GenerationConfig(**data["generation"])
+    config = Config(
+        llm=llm,
+        embedding=embedding,
+        vector=vector,
+        graph=graph,
+        generation=generation,
+    )
+
     if "index_dir" in data:
         config.index_dir = Path(data["index_dir"])
     if "api_host" in data:

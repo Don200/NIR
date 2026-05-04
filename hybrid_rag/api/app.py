@@ -106,7 +106,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
         sources = [
             SourceItem(
-                content=s.content[:500],
+                content=s.content,
                 score=s.score,
                 source=s.source.value,
                 metadata=s.metadata,
@@ -129,7 +129,3 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         return data
 
     return app
-
-
-# For direct uvicorn usage
-app = create_app()

@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -14,11 +15,103 @@ from llama_index.core.node_parser import (
     MarkdownNodeParser,
     SentenceSplitter,
 )
+from llama_index.core.utils import get_tokenizer
 
 from ..core.config import Config
 from ..core.models import Document, Chunk, SearchResult, RetrievalMethod
 
 logger = logging.getLogger(__name__)
+
+
+_ATOM_TOKENIZER = get_tokenizer()
+
+_DOLLAR_BLOCK_RE = re.compile(r"\$\$.*?\$\$", re.DOTALL)
+_BRACKET_BLOCK_RE = re.compile(r"\\\[.*?\\\]", re.DOTALL)
+_BEGIN_END_RE = re.compile(r"\\begin\{(\w+\*?)\}.*?\\end\{\1\}", re.DOTALL)
+
+
+def _find_table_blocks(text: str) -> list[tuple[int, int]]:
+    """Runs of 2+ consecutive lines containing '|' (markdown tables)."""
+    lines = text.split("\n")
+    pos = [0]
+    for line in lines:
+        pos.append(pos[-1] + len(line) + 1)
+    blocks: list[tuple[int, int]] = []
+    i = 0
+    while i < len(lines):
+        if "|" in lines[i]:
+            j = i + 1
+            while j < len(lines) and "|" in lines[j]:
+                j += 1
+            if j - i >= 2:
+                blocks.append((pos[i], pos[j - 1] + len(lines[j - 1])))
+            i = j
+        else:
+            i += 1
+    return blocks
+
+
+def _find_atoms(text: str) -> list[tuple[int, int]]:
+    """Non-overlapping intervals that must not be split: $$, \\[\\], envs, tables."""
+    candidates: list[tuple[int, int]] = []
+    for pat in (_DOLLAR_BLOCK_RE, _BRACKET_BLOCK_RE, _BEGIN_END_RE):
+        candidates.extend((m.start(), m.end()) for m in pat.finditer(text))
+    candidates.extend(_find_table_blocks(text))
+    candidates.sort()
+    resolved: list[tuple[int, int]] = []
+    for s, e in candidates:
+        if resolved and s <= resolved[-1][1]:
+            resolved[-1] = (resolved[-1][0], max(resolved[-1][1], e))
+        else:
+            resolved.append((s, e))
+    return resolved
+
+
+def _atom_aware_split(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
+    """Split text into chunks ≤ chunk_size tokens, never breaking inside atoms.
+
+    Atoms = ``$$ ... $$``, ``\\[ ... \\]``, ``\\begin{env} ... \\end{env}``,
+    and runs of 2+ consecutive markdown table rows. Atoms larger than
+    chunk_size become their own oversize chunks (intact, KaTeX-renderable).
+    """
+    atoms = _find_atoms(text)
+    segments: list[tuple[str, str]] = []
+    pos = 0
+    for s, e in atoms:
+        if s > pos:
+            segments.append(("text", text[pos:s]))
+        segments.append(("atom", text[s:e]))
+        pos = e
+    if pos < len(text):
+        segments.append(("text", text[pos:]))
+
+    sub_splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    pieces: list[str] = []
+    for kind, body in segments:
+        if not body.strip():
+            continue
+        if kind == "text":
+            doc = LlamaDocument(text=body)
+            for n in sub_splitter.get_nodes_from_documents([doc]):
+                pieces.append(n.get_content())
+        else:
+            pieces.append(body)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    cur_tokens = 0
+    for p in pieces:
+        pt = len(_ATOM_TOKENIZER(p))
+        if current and cur_tokens + pt > chunk_size:
+            chunks.append("\n\n".join(current))
+            current = [p]
+            cur_tokens = pt
+        else:
+            current.append(p)
+            cur_tokens += pt
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
 
 
 class VectorIndex:
@@ -67,59 +160,68 @@ class VectorIndex:
         return [item.embedding for item in response.data]
 
     def _chunk_document(self, doc: Document) -> list[Chunk]:
-        """Split document into chunks using LlamaIndex parsers.
+        """Split document into chunks.
 
         Strategy:
         1. If content looks like markdown (has headers), use MarkdownNodeParser
-        2. Then apply SentenceSplitter to handle long sections
+           to split by header sections (preserves header_path metadata).
+        2. For each section, use atom-aware splitting that keeps $$...$$,
+           \\[...\\], \\begin/\\end environments, and markdown tables intact.
         """
-        llama_doc = LlamaDocument(
-            text=doc.content,
-            doc_id=doc.id,
-            metadata={"title": doc.title or "", **doc.metadata},
-        )
-
         is_markdown = any(
             line.strip().startswith("#")
             for line in doc.content.split("\n")[:50]
         )
 
+        base_metadata = {"title": doc.title or "", **doc.metadata}
+
         if is_markdown:
-            md_parser = MarkdownNodeParser()
-            nodes = md_parser.get_nodes_from_documents([llama_doc])
-            logger.debug(f"MarkdownParser produced {len(nodes)} nodes")
-        else:
-            nodes = [llama_doc]
-
-        sentence_splitter = SentenceSplitter(
-            chunk_size=self.config.vector.chunk_size,
-            chunk_overlap=self.config.vector.chunk_overlap,
-        )
-
-        final_nodes = sentence_splitter.get_nodes_from_documents(nodes)
-        logger.debug(f"SentenceSplitter produced {len(final_nodes)} final nodes")
-
-        chunks = []
-        for idx, node in enumerate(final_nodes):
-            chunk_id = f"{doc.id}::chunk_{idx}"
-
-            node_metadata = dict(node.metadata) if node.metadata else {}
-            node_metadata["chunk_index"] = idx
-
-            if hasattr(node, "metadata"):
-                for key in ["Header_1", "Header_2", "Header_3"]:
-                    if key in node.metadata:
-                        node_metadata[key.lower()] = node.metadata[key]
-
-            chunks.append(
-                Chunk(
-                    id=chunk_id,
-                    doc_id=doc.id,
-                    content=node.get_content(),
-                    metadata=node_metadata,
-                )
+            llama_doc = LlamaDocument(
+                text=doc.content, doc_id=doc.id, metadata=base_metadata,
             )
+            md_nodes = MarkdownNodeParser().get_nodes_from_documents([llama_doc])
+            logger.debug(f"MarkdownParser produced {len(md_nodes)} nodes")
+        else:
+            md_nodes = [LlamaDocument(
+                text=doc.content, doc_id=doc.id, metadata=base_metadata,
+            )]
 
+        min_chars = self.config.vector.min_chunk_chars
+        chunks = []
+        dropped = 0
+        for md_node in md_nodes:
+            sub_chunks = _atom_aware_split(
+                md_node.get_content(),
+                chunk_size=self.config.vector.chunk_size,
+                chunk_overlap=self.config.vector.chunk_overlap,
+            )
+            node_meta_base = dict(md_node.metadata) if md_node.metadata else {}
+            for key in ("Header_1", "Header_2", "Header_3"):
+                if key in node_meta_base:
+                    node_meta_base[key.lower()] = node_meta_base[key]
+
+            for sub_text in sub_chunks:
+                if min_chars and len(sub_text.strip()) < min_chars:
+                    dropped += 1
+                    continue
+
+                idx = len(chunks)
+                node_metadata = dict(node_meta_base)
+                node_metadata["chunk_index"] = idx
+
+                chunks.append(
+                    Chunk(
+                        id=f"{doc.id}::chunk_{idx}",
+                        doc_id=doc.id,
+                        content=sub_text,
+                        metadata=node_metadata,
+                    )
+                )
+
+        if dropped:
+            logger.info(
+                f"Dropped {dropped} chunks shorter than {min_chars} chars from {doc.id}"
+            )
         return chunks
 
     def index_documents(self, documents: list[Document]) -> int:

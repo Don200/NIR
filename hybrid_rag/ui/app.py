@@ -1,33 +1,38 @@
 """Streamlit UI for Hybrid RAG (academic-style demo)."""
 
+import json
 import os
+import tempfile
 from typing import Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
-from streamlit_agraph import agraph, Node, Edge, Config
+from pyvis.network import Network
 
 API_URL = os.getenv("API_URL", "http://api:8000")
+
+PREVIEW_CHARS = 240
 
 
 METHOD_LABELS = {
     "hybrid": "Гибридный (вектор + граф)",
-    "vector": "Векторный (семантический поиск)",
-    "graph": "Графовый (мультихоп по связям)",
+    "vector": "Векторный поиск",
+    "graph": "Поиск по графу знаний",
 }
 
 METHOD_DESCRIPTIONS = {
     "hybrid": (
-        "Объединение результатов плотного векторного поиска и обхода графа знаний "
-        "с последующей дедупликацией."
+        "Совмещает векторный поиск и обход графа знаний, "
+        "убирая повторяющиеся фрагменты."
     ),
     "vector": (
-        "Поиск по плотным эмбеддингам в ChromaDB. Подходит для однохоповых "
-        "фактических запросов."
+        "Семантический поиск по векторам ChromaDB. "
+        "Хорошо работает для прямых фактических вопросов."
     ),
     "graph": (
-        "Поиск по графу знаний, построенному с помощью LlamaIndex PropertyGraphIndex. "
-        "Подходит для запросов, требующих рассуждения по нескольким связям."
+        "Обход графа знаний (LlamaIndex PropertyGraphIndex). "
+        "Полезен, когда ответ требует пройти по нескольким связям между понятиями."
     ),
 }
 
@@ -100,58 +105,56 @@ h2 { font-weight: 600 !important; }
     font-family: var(--sans);
 }
 
-.source-card {
-    border: 1px solid var(--rule);
-    border-left: 3px solid var(--accent);
-    padding: 0.85rem 1rem;
-    margin: 0.6rem 0;
-    background: #fff;
-    font-family: var(--sans);
-    font-size: 0.92rem;
-}
-.source-card .source-topic {
+.source-topic {
     font-family: var(--serif);
     font-weight: 600;
     font-size: 1.02rem;
     color: var(--accent);
     margin-bottom: 0.15rem;
 }
-.source-card .source-title {
+.source-title {
     font-family: var(--serif);
     font-style: italic;
     color: var(--ink);
     margin-bottom: 0.25rem;
     line-height: 1.35;
 }
-.source-card .source-authors {
+.source-authors {
     color: var(--muted);
     margin-bottom: 0.25rem;
+    font-family: var(--sans);
+    font-size: 0.88rem;
 }
-.source-card .source-citation {
+.source-file {
+    margin: 0.15rem 0 0.35rem 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+.source-file code {
+    background: var(--soft);
+    border: 1px solid var(--rule);
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+    font-size: 0.78rem;
+    color: var(--ink);
+}
+.source-citation {
     color: var(--muted);
     font-size: 0.84rem;
     border-top: 1px dotted var(--rule);
     padding-top: 0.35rem;
-    margin-top: 0.35rem;
+    margin-top: 0.5rem;
     line-height: 1.4;
+    font-family: var(--sans);
 }
-.source-card .source-meta {
+.source-meta {
     font-family: var(--sans);
     font-size: 0.78rem;
     color: var(--muted);
     letter-spacing: 0.04em;
     text-transform: uppercase;
     margin-bottom: 0.4rem;
-}
-.source-card pre {
-    background: var(--soft);
-    border: 1px solid var(--rule);
-    padding: 0.6rem 0.7rem;
-    font-size: 0.84rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--ink);
-    margin-top: 0.5rem;
 }
 
 .status-row {
@@ -238,9 +241,9 @@ def render_app_header(subtitle: str):
     st.markdown(
         f"""
         <div class="app-header">
-            <p class="title">Гибридная система информационного поиска</p>
+            <p class="title">Гибридный поиск по научным работам</p>
             <p class="subtitle">{subtitle}</p>
-            <p class="meta">Выпускная квалификационная работа &middot; Демонстрационный стенд</p>
+            <p class="meta">Выпускная квалификационная работа</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -283,47 +286,96 @@ def _esc(value: str) -> str:
     )
 
 
-def render_source_card(idx: int, src: dict):
+def _make_preview(text: str, max_chars: int = PREVIEW_CHARS) -> str:
+    """Cut text near a word boundary so we don't end mid-token."""
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(" ")
+    if last_space > max_chars // 2:
+        cut = cut[:last_space]
+    return cut.rstrip() + "…"
+
+
+def render_source_card(idx: int, src: dict, key_prefix: str):
     meta = src.get("metadata") or {}
     topic = meta.get("topic") or ""
     display_title = meta.get("display_title") or ""
     authors = meta.get("authors") or meta.get("author") or ""
     citation = meta.get("citation") or ""
+    file_name = (
+        meta.get("doc_title")
+        or meta.get("file_name")
+        or meta.get("title")
+        or ""
+    )
+    chunk_index = meta.get("chunk_index")
     score = src.get("score", 0.0)
     method_used = src.get("source", "")
-    snippet = (src.get("content") or "").strip()
+    content = (src.get("content") or "").strip()
 
     method_ru = {"vector": "вектор", "graph": "граф"}.get(method_used, method_used)
-    header_meta = (
-        f"Источник №{idx} &middot; релевантность {score:.3f} &middot; ретривер: {method_ru}"
-    )
+    header_bits = [
+        f"Источник №{idx}",
+        f"релевантность {score:.3f}",
+        f"найден через: {method_ru}",
+    ]
+    if chunk_index is not None:
+        header_bits.append(f"чанк #{chunk_index}")
+    header_meta = " &middot; ".join(header_bits)
 
-    parts = [f'<div class="source-meta">{header_meta}</div>']
-    if topic:
-        parts.append(f'<div class="source-topic">{_esc(topic)}</div>')
-    if display_title and display_title != topic:
-        parts.append(f'<div class="source-title">{_esc(display_title)}</div>')
-    if authors:
-        parts.append(f'<div class="source-authors">Авторы: {_esc(authors)}</div>')
-    if snippet:
-        max_len = 600
-        shown = snippet[:max_len] + ("…" if len(snippet) > max_len else "")
-        parts.append(f"<pre>{_esc(shown)}</pre>")
-    if citation and citation != display_title:
-        parts.append(f'<div class="source-citation">{_esc(citation)}</div>')
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="source-meta">{header_meta}</div>',
+            unsafe_allow_html=True,
+        )
+        if topic:
+            st.markdown(
+                f'<div class="source-topic">{_esc(topic)}</div>',
+                unsafe_allow_html=True,
+            )
+        if display_title and display_title != topic:
+            st.markdown(
+                f'<div class="source-title">{_esc(display_title)}</div>',
+                unsafe_allow_html=True,
+            )
+        if authors:
+            st.markdown(
+                f'<div class="source-authors">Авторы: {_esc(authors)}</div>',
+                unsafe_allow_html=True,
+            )
+        if file_name:
+            st.markdown(
+                f'<div class="source-file"><code>{_esc(file_name)}</code></div>',
+                unsafe_allow_html=True,
+            )
 
-    st.markdown(
-        f'<div class="source-card">{"".join(parts)}</div>',
-        unsafe_allow_html=True,
-    )
+        if content:
+            if len(content) > PREVIEW_CHARS:
+                st.markdown(_make_preview(content))
+                with st.expander("Полный текст фрагмента", expanded=False):
+                    st.markdown(content)
+            else:
+                st.markdown(content)
+
+        if citation and citation != display_title:
+            st.markdown(
+                f'<div class="source-citation">{_esc(citation)}</div>',
+                unsafe_allow_html=True,
+            )
 
 
-def render_sources(sources: list[dict]):
+def render_sources(sources: list[dict], key_prefix: str):
     if not sources:
         return
-    with st.expander(f"Источники ({len(sources)})", expanded=False):
+    show = st.toggle(
+        f"Источники ({len(sources)})",
+        value=False,
+        key=f"{key_prefix}_show_sources",
+    )
+    if show:
         for i, src in enumerate(sources, 1):
-            render_source_card(i, src)
+            render_source_card(i, src, f"{key_prefix}_src{i}")
 
 
 def render_about_block():
@@ -332,11 +384,10 @@ def render_about_block():
         <div class="about-box">
         <b>Корпус.</b> Научные работы по диагональным латинским квадратам и
         смежным комбинаторным задачам.<br/><br/>
-        <b>Метод.</b> Гибридный ретривер, объединяющий плотный векторный
-        поиск (ChromaDB) и обход графа знаний (LlamaIndex
-        PropertyGraphIndex с динамическим извлечением триплетов).<br/><br/>
-        <b>Генерация.</b> LLM поверх извлечённого контекста, цитирующая
-        источники по теме и авторам.
+        <b>Поиск.</b> Совмещает векторный поиск по ChromaDB и обход графа знаний,
+        собранного из триплетов (LlamaIndex PropertyGraphIndex).<br/><br/>
+        <b>Ответ.</b> Формирует языковая модель по найденному контексту,
+        со ссылками на работы по теме и авторам.
         </div>
         """,
         unsafe_allow_html=True,
@@ -362,82 +413,331 @@ ENTITY_TYPE_COLORS = {
 DEFAULT_ENTITY_COLOR = "#4a5568"
 
 
+def _node_color(node: dict) -> str:
+    return ENTITY_TYPE_COLORS.get(
+        (node.get("properties") or {}).get("type"),
+        DEFAULT_ENTITY_COLOR,
+    )
+
+
+def _node_tooltip(node: dict) -> str:
+    props = node.get("properties") or {}
+    parts = [f"<b>{node.get('label', node['id'])}</b>"]
+    type_ = props.get("type")
+    if type_:
+        parts.append(f"<i>{type_}</i>")
+    title = props.get("title")
+    if title:
+        parts.append(f"источник: {title}")
+    return "<br>".join(parts)
+
+
+def _edge_tooltip(edge: dict) -> str:
+    props = edge.get("properties") or {}
+    parts = [f"<b>{edge.get('label', '')}</b>"]
+    parts.append(f"{edge['source']} → {edge['target']}")
+    title = props.get("title")
+    if title:
+        parts.append(f"источник: {title}")
+    return "<br>".join(parts)
+
+
+PYVIS_OPTIONS = {
+    "nodes": {
+        "shape": "dot",
+        "borderWidth": 2,
+        "font": {
+            "size": 14,
+            "face": "Inter, Helvetica, Arial, sans-serif",
+            "color": "#1f2933",
+            "strokeWidth": 3,
+            "strokeColor": "#ffffff",
+        },
+        "shadow": {"enabled": False},
+    },
+    "edges": {
+        "color": {"color": "#a0aec0", "highlight": "#1a365d", "hover": "#2c5282"},
+        "smooth": {"type": "continuous", "roundness": 0.2},
+        "font": {
+            "size": 11,
+            "face": "Inter, Helvetica, Arial, sans-serif",
+            "color": "#52606d",
+            "strokeWidth": 0,
+            "align": "middle",
+        },
+        "arrows": {"to": {"enabled": True, "scaleFactor": 0.6}},
+        "width": 1,
+    },
+    "interaction": {
+        "hover": True,
+        "tooltipDelay": 100,
+        "navigationButtons": True,
+        "keyboard": True,
+        "hideEdgesOnDrag": True,
+    },
+    "physics": {
+        "solver": "forceAtlas2Based",
+        "forceAtlas2Based": {
+            "gravitationalConstant": -55,
+            "centralGravity": 0.01,
+            "springLength": 120,
+            "springConstant": 0.06,
+            "damping": 0.6,
+            "avoidOverlap": 0.5,
+        },
+        "stabilization": {"enabled": True, "iterations": 250, "fit": True},
+        "minVelocity": 0.5,
+    },
+}
+
+
+def build_pyvis_html(
+    nodes: list[dict],
+    edges: list[dict],
+    height_px: int = 720,
+) -> str:
+    """Build standalone HTML for a Pyvis network."""
+    net = Network(
+        height=f"{height_px}px",
+        width="100%",
+        directed=True,
+        bgcolor="#ffffff",
+        font_color="#1f2933",
+        notebook=False,
+        cdn_resources="in_line",
+    )
+
+    for n in nodes:
+        net.add_node(
+            n["id"],
+            label=(n.get("label") or n["id"])[:60],
+            title=_node_tooltip(n),
+            color=_node_color(n),
+            size=18,
+        )
+
+    node_ids = {n["id"] for n in nodes}
+    for e in edges:
+        if e["source"] not in node_ids or e["target"] not in node_ids:
+            continue
+        net.add_edge(
+            e["source"],
+            e["target"],
+            label=e.get("label", ""),
+            title=_edge_tooltip(e),
+        )
+
+    net.set_options(json.dumps(PYVIS_OPTIONS))
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".html", delete=False, encoding="utf-8"
+    ) as f:
+        net.write_html(f.name, notebook=False, open_browser=False)
+        path = f.name
+
+    with open(path, encoding="utf-8") as f:
+        html = f.read()
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return html
+
+
+def filter_graph(
+    data: dict,
+    entity_types: list[str],
+    relation_types: list[str],
+    search: str,
+) -> dict:
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+
+    if entity_types:
+        keep = set(entity_types)
+        nodes = [
+            n for n in nodes
+            if (n.get("properties") or {}).get("type") in keep
+        ]
+
+    if search:
+        q = search.lower()
+        nodes = [
+            n for n in nodes
+            if q in (n.get("label") or "").lower()
+            or q in (n.get("id") or "").lower()
+        ]
+
+    node_ids = {n["id"] for n in nodes}
+
+    if relation_types:
+        keep_rel = set(relation_types)
+        edges = [e for e in edges if e.get("label") in keep_rel]
+
+    edges = [
+        e for e in edges
+        if e["source"] in node_ids and e["target"] in node_ids
+    ]
+
+    if search or entity_types or relation_types:
+        connected = {e["source"] for e in edges} | {e["target"] for e in edges}
+        if connected:
+            nodes = [n for n in nodes if n["id"] in connected]
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def render_graph_legend(present_types: list[str]):
+    if not present_types:
+        return
+    legend_items = "".join(
+        f"<span style='display:inline-flex;align-items:center;"
+        f"margin-right:0.9rem;font-family:var(--sans);"
+        f"font-size:0.78rem;color:var(--muted);'>"
+        f"<span style='display:inline-block;width:10px;height:10px;"
+        f"border-radius:50%;background:{ENTITY_TYPE_COLORS.get(t, DEFAULT_ENTITY_COLOR)};"
+        f"margin-right:0.35rem;'></span>{t}</span>"
+        for t in present_types
+    )
+    st.markdown(
+        f"<div style='margin:0.4rem 0 0.6rem 0;'>{legend_items}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def cached_graph_data(limit: int) -> Optional[dict]:
+    return get_graph_data(limit=limit)
+
+
 def render_graph_page():
     render_app_header("Визуализация графа знаний")
 
-    col_left, col_right = st.columns([3, 1])
-    with col_right:
-        limit = st.slider("Количество триплетов", 10, 500, 150, 10)
-        load = st.button("Построить", use_container_width=True)
+    with st.sidebar:
+        st.markdown("### Параметры графа")
+        limit = st.slider("Сколько триплетов загрузить", 50, 800, 300, 50)
+        height = st.slider("Высота холста, px", 500, 1100, 760, 20)
 
-    if load:
-        with st.spinner("Загрузка структуры графа..."):
-            data = get_graph_data(limit=limit)
+    data = cached_graph_data(limit)
+    if not data or not data.get("nodes"):
+        st.warning("Граф пуст или не загрузился. Проверьте, что API запущен.")
+        return
 
-        if data and data.get("nodes"):
-            with col_left:
-                st.markdown(
-                    f"<p style='font-family:var(--sans);color:var(--muted);"
-                    f"font-size:0.88rem;margin-top:0.4rem;'>"
-                    f"Отображено вершин: {len(data['nodes'])} &middot; "
-                    f"рёбер: {len(data['edges'])}</p>",
-                    unsafe_allow_html=True,
-                )
+    all_entity_types = sorted({
+        (n.get("properties") or {}).get("type") or ""
+        for n in data["nodes"]
+    } - {""})
+    all_relation_types = sorted({
+        e.get("label") or "" for e in data["edges"]
+    } - {""})
 
-            present_types = sorted({
-                (n.get("properties") or {}).get("type") or ""
-                for n in data["nodes"]
-            } - {""})
-            if present_types:
-                legend_items = "".join(
-                    f"<span style='display:inline-flex;align-items:center;"
-                    f"margin-right:0.9rem;font-family:var(--sans);"
-                    f"font-size:0.78rem;color:var(--muted);'>"
-                    f"<span style='display:inline-block;width:10px;height:10px;"
-                    f"border-radius:50%;background:{ENTITY_TYPE_COLORS.get(t, DEFAULT_ENTITY_COLOR)};"
-                    f"margin-right:0.35rem;'></span>{t}</span>"
-                    for t in present_types
-                )
-                st.markdown(
-                    f"<div style='margin:0.4rem 0 0.6rem 0;'>{legend_items}</div>",
-                    unsafe_allow_html=True,
-                )
+    col_a, col_b, col_c = st.columns([2, 2, 2])
+    with col_a:
+        entity_filter = st.multiselect(
+            "Типы сущностей",
+            options=all_entity_types,
+            default=[],
+            placeholder="все типы",
+        )
+    with col_b:
+        relation_filter = st.multiselect(
+            "Типы связей",
+            options=all_relation_types,
+            default=[],
+            placeholder="все связи",
+        )
+    with col_c:
+        search = st.text_input(
+            "Поиск по имени сущности",
+            value="",
+            placeholder="например, DLS, transversal",
+        )
 
-            nodes = [
-                Node(
-                    id=node_data["id"],
-                    label=node_data["label"][:60],
-                    size=20,
-                    color=ENTITY_TYPE_COLORS.get(
-                        (node_data.get("properties") or {}).get("type"),
-                        DEFAULT_ENTITY_COLOR,
-                    ),
-                )
-                for node_data in data["nodes"]
-            ]
-            edges = [
-                Edge(
-                    source=edge_data["source"],
-                    target=edge_data["target"],
-                    label=edge_data["label"],
-                    color="#a0aec0",
-                )
-                for edge_data in data["edges"]
-            ]
-            config = Config(
-                width=1100,
-                height=720,
-                directed=True,
-                physics=True,
-                hierarchical=False,
+    filtered = filter_graph(data, entity_filter, relation_filter, search)
+    nodes, edges = filtered["nodes"], filtered["edges"]
+
+    if not nodes:
+        st.info("Под фильтр ничего не попало. Сбросьте параметры.")
+        return
+
+    st.markdown(
+        f"<p style='font-family:var(--sans);color:var(--muted);"
+        f"font-size:0.88rem;margin-top:0.2rem;'>"
+        f"Вершин: <b style='color:var(--ink);'>{len(nodes)}</b> &middot; "
+        f"рёбер: <b style='color:var(--ink);'>{len(edges)}</b> &middot; "
+        f"всего в индексе: {len(data['nodes'])} вершин / {len(data['edges'])} триплетов</p>",
+        unsafe_allow_html=True,
+    )
+
+    present_types = sorted({
+        (n.get("properties") or {}).get("type") or ""
+        for n in nodes
+    } - {""})
+    render_graph_legend(present_types)
+
+    html = build_pyvis_html(nodes, edges, height_px=height)
+    components.html(html, height=height + 30, scrolling=False)
+
+    with st.expander("Экспорт", expanded=False):
+        col_x, col_y = st.columns(2)
+        with col_x:
+            st.download_button(
+                "Скачать HTML графа",
+                data=html.encode("utf-8"),
+                file_name="hybrid_rag_graph.html",
+                mime="text/html",
+                use_container_width=True,
             )
-            agraph(nodes=nodes, edges=edges, config=config)
-        else:
-            st.warning("Граф не загружен или пуст. Проверьте логи API.")
+        with col_y:
+            st.download_button(
+                "Скачать GEXF (Gephi)",
+                data=build_gexf(nodes, edges).encode("utf-8"),
+                file_name="hybrid_rag_graph.gexf",
+                mime="application/xml",
+                use_container_width=True,
+            )
+
+
+def build_gexf(nodes: list[dict], edges: list[dict]) -> str:
+    """Render a minimal GEXF document so the graph can be opened in Gephi."""
+    def esc(s: str) -> str:
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    id_index = {n["id"]: str(i) for i, n in enumerate(nodes)}
+    node_xml = "\n".join(
+        f'      <node id="{id_index[n["id"]]}" label="{esc(n.get("label") or n["id"])}">'
+        f'<attvalues><attvalue for="0" value="{esc((n.get("properties") or {}).get("type") or "")}"/></attvalues>'
+        f"</node>"
+        for n in nodes
+    )
+    edge_xml = "\n".join(
+        f'      <edge id="{i}" source="{id_index[e["source"]]}" '
+        f'target="{id_index[e["target"]]}" label="{esc(e.get("label") or "")}"/>'
+        for i, e in enumerate(edges)
+        if e["source"] in id_index and e["target"] in id_index
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<gexf xmlns="http://www.gexf.net/1.2draft" version="1.2">\n'
+        '  <graph mode="static" defaultedgetype="directed">\n'
+        '    <attributes class="node">\n'
+        '      <attribute id="0" title="entity_type" type="string"/>\n'
+        "    </attributes>\n"
+        f"    <nodes>\n{node_xml}\n    </nodes>\n"
+        f"    <edges>\n{edge_xml}\n    </edges>\n"
+        "  </graph>\n"
+        "</gexf>\n"
+    )
 
 
 def render_chat_page():
-    render_app_header("Векторно-графовый ретривер для научной литературы")
+    render_app_header("Вопросы по корпусу научных работ")
 
     method = st.session_state.method
     st.markdown(
@@ -446,11 +746,11 @@ def render_chat_page():
         unsafe_allow_html=True,
     )
 
-    for message in st.session_state.messages:
+    for m_idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message["role"] == "assistant" and "sources" in message:
-                render_sources(message["sources"])
+                render_sources(message["sources"], f"msg{m_idx}")
 
     if prompt := st.chat_input("Введите вопрос по корпусу..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -458,12 +758,13 @@ def render_chat_page():
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.spinner("Извлечение контекста и генерация ответа..."):
+            with st.spinner("Ищу ответ..."):
                 result = query_rag(prompt, st.session_state.method)
 
             if result:
                 st.markdown(result["answer"])
-                render_sources(result.get("sources") or [])
+                fresh_idx = len(st.session_state.messages)
+                render_sources(result.get("sources") or [], f"msg{fresh_idx}")
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": result["answer"],
@@ -475,7 +776,7 @@ def render_chat_page():
 
 def main():
     st.set_page_config(
-        page_title="Гибридная система информационного поиска",
+        page_title="Гибридный поиск по научным работам",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -492,7 +793,7 @@ def main():
             label_visibility="collapsed",
         )
 
-        st.markdown("### Стратегия поиска")
+        st.markdown("### Метод поиска")
         method = st.selectbox(
             "Метод",
             options=list(METHOD_LABELS.keys()),
@@ -502,13 +803,12 @@ def main():
         )
         st.session_state.method = method
 
-        st.markdown("### Состояние системы")
+        st.markdown("### Индексы")
         render_status_block(get_status())
 
-        st.markdown("### О системе")
+        st.markdown("### О работе")
         render_about_block()
 
-        st.markdown("### Управление")
         if st.button("Очистить диалог", use_container_width=True):
             st.session_state.messages = []
             st.rerun()

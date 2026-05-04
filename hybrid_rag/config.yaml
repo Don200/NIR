@@ -13,9 +13,10 @@ embedding:
   base_url: "https://openrouter.ai/api/v1"
 
 vector:
-  chunk_size: 1500       # tokens
-  chunk_overlap: 300     # ~20% overlap
+  chunk_size: 1024       # tokens (atom-aware splitter keeps tables/formulas whole)
+  chunk_overlap: 200     # ~20% overlap
   top_k: 10              # retrieval top-k
+  min_chunk_chars: 100   # drop chunks shorter than this many chars (0 = off)
 
 graph:
   max_triplets_per_chunk: 10
