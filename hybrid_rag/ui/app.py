@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import tempfile
+from collections import OrderedDict
 from typing import Optional
 
 import streamlit as st
@@ -192,6 +194,58 @@ section[data-testid="stSidebar"] {
     line-height: 1.45;
 }
 .about-box b { color: var(--ink); }
+
+.triplet-block {
+    background: var(--soft);
+    border-left: 3px solid var(--accent);
+    padding: 0.55rem 0.85rem;
+    margin: 0.35rem 0 0.7rem 0;
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    line-height: 1.55;
+}
+.triplet-subject {
+    font-weight: 700;
+    color: var(--accent);
+    margin: 0.25rem 0 0.15rem 0;
+    font-size: 0.9rem;
+}
+.triplet-subject:first-child { margin-top: 0; }
+.triplet-list {
+    list-style: none;
+    padding-left: 0.7rem;
+    margin: 0;
+}
+.triplet-list li {
+    margin: 0.15rem 0;
+    color: var(--ink);
+}
+.rel-chip {
+    display: inline-block;
+    padding: 0.02rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-right: 0.45rem;
+    color: white;
+    vertical-align: 1px;
+    font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+.rel-isa     { background: #2c5282; }
+.rel-def     { background: #2f855a; }
+.rel-prop    { background: #b7791f; }
+.rel-count   { background: #6b46c1; }
+.rel-method  { background: #c05621; }
+.rel-platform{ background: #319795; }
+.rel-rel     { background: #718096; }
+.rel-default { background: #4a5568; }
+.triplet-toggle-row {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 0.3rem;
+    font-family: var(--sans);
+}
 </style>
 """
 
@@ -297,6 +351,174 @@ def _make_preview(text: str, max_chars: int = PREVIEW_CHARS) -> str:
     return cut.rstrip() + "…"
 
 
+_FACTS_HEADER = "Here are some facts extracted from the provided text:"
+
+# subj — anything non-greedy; rel — UPPERCASE_WITH_UNDERSCORES; obj — anything until
+# the next subj-rel-obj triple or end of line.
+_TRIPLET_RE = re.compile(
+    r"(\S.*?)\s*->\s*([A-Z][A-Z_0-9]+)\s*->\s*(.+?)"
+    r"(?=\s+\S.*?\s*->\s*[A-Z][A-Z_0-9]+\s*->|\s*$)"
+)
+
+_RELATION_CSS = {
+    "IS_A": "rel-isa",
+    "SPECIAL_CASE_OF": "rel-isa",
+    "GENERALIZES": "rel-isa",
+    "EQUIVALENT_TO": "rel-isa",
+    "DEFINED_AS": "rel-def",
+    "HAS_PROPERTY": "rel-prop",
+    "HAS_CONSTRAINT": "rel-prop",
+    "CONSTRAINED_BY": "rel-prop",
+    "COUNTED_BY": "rel-count",
+    "MEASURED_BY": "rel-count",
+    "HAS_ENUMERATION_SEQUENCE": "rel-count",
+    "HAS_TRANSVERSAL_COUNT": "rel-count",
+    "HAS_TRANSVERSAL": "rel-count",
+    "USES_METHOD": "rel-method",
+    "SOLVED_BY": "rel-method",
+    "REDUCED_TO": "rel-method",
+    "USED_IN": "rel-method",
+    "USED_FOR": "rel-method",
+    "OPTIMIZED_BY": "rel-method",
+    "COMPUTED_BY": "rel-method",
+    "REPLACES": "rel-method",
+    "COMPUTED_ON": "rel-platform",
+    "APPLIED_ON_LEVELS": "rel-platform",
+    "ORTHOGONAL_TO": "rel-rel",
+    "PROVES_CONDITION_FOR": "rel-rel",
+    "REQUIRES": "rel-rel",
+    "IMPROVES_PERFORMANCE_OF": "rel-rel",
+    "ENCODES": "rel-rel",
+    "ENCODED_BY": "rel-rel",
+    "HAS_COMPLEXITY": "rel-rel",
+}
+
+
+def _parse_facts_block(content: str) -> tuple[list[tuple[str, str, str]], str]:
+    """Split content into (triplets, body_markdown).
+
+    LlamaIndex graph retriever prepends a "Here are some facts extracted from
+    the provided text:" header followed by triplet lines, then the source
+    chunk text. We separate them so the UI can render triplets structurally
+    and the body as markdown (formulas, tables) without the triplet noise.
+    """
+    if _FACTS_HEADER not in content:
+        return [], content
+
+    _, _, rest = content.partition(_FACTS_HEADER)
+    rest = rest.lstrip("\n ").rstrip()
+
+    parts = re.split(r"\n\s*\n", rest, maxsplit=1)
+    triplet_text = parts[0]
+    body = parts[1].strip() if len(parts) > 1 else ""
+
+    seen: "OrderedDict[tuple[str, str, str], None]" = OrderedDict()
+    for line in triplet_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        for m in _TRIPLET_RE.finditer(line):
+            subj = m.group(1).strip()
+            rel = m.group(2).strip()
+            obj = m.group(3).strip().rstrip(",;.")
+            key = (subj, rel, obj)
+            if key not in seen:
+                seen[key] = None
+
+    return list(seen.keys()), body
+
+
+_RELATION_EDGE_COLOR = {
+    "rel-isa":      "#2c5282",
+    "rel-def":      "#2f855a",
+    "rel-prop":     "#b7791f",
+    "rel-count":    "#6b46c1",
+    "rel-method":   "#c05621",
+    "rel-platform": "#319795",
+    "rel-rel":      "#718096",
+    "rel-default":  "#4a5568",
+}
+
+
+def _wrap_label(text: str, width: int = 18, max_lines: int = 3) -> str:
+    """Soft-wrap long entity labels for graphviz nodes."""
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        if not cur:
+            cur = w
+        elif len(cur) + 1 + len(w) <= width:
+            cur += " " + w
+        else:
+            lines.append(cur)
+            cur = w
+            if len(lines) == max_lines - 1:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    out = "\n".join(lines)
+    consumed = sum(len(line.split()) for line in lines)
+    if consumed < len(words):
+        out += " …"
+    return out
+
+
+def _dot_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _render_triplet_dot(triplets: list[tuple[str, str, str]]) -> str:
+    """Build graphviz DOT for triplet subgraph rendering via st.graphviz_chart."""
+    nodes: "OrderedDict[str, str]" = OrderedDict()  # id -> wrapped label
+    edges: list[tuple[str, str, str, str]] = []  # (src_id, tgt_id, rel, color)
+
+    for subj, rel, obj in triplets:
+        nodes.setdefault(subj, _wrap_label(subj))
+        nodes.setdefault(obj, _wrap_label(obj))
+        css = _RELATION_CSS.get(rel, "rel-default")
+        color = _RELATION_EDGE_COLOR[css]
+        edges.append((subj, obj, rel, color))
+
+    # subjects (nodes that appear on the left side of any triplet) get accent fill
+    subject_ids = {s for s, _, _ in triplets}
+
+    lines = [
+        'digraph G {',
+        '  rankdir=LR;',
+        '  bgcolor="transparent";',
+        '  pad="0.15,0.1"; nodesep=0.18; ranksep=0.45;',
+        '  margin=0;',
+        '  node [shape=box, style="rounded,filled", fontname="Inter, Helvetica", '
+        'fontsize=9, color="#cbd2d9", fillcolor="#ffffff", margin="0.08,0.04", '
+        'height=0.3];',
+        '  edge [fontname="Inter, Helvetica", fontsize=8, arrowsize=0.6, '
+        'penwidth=0.9];',
+    ]
+    for nid, label in nodes.items():
+        if nid in subject_ids:
+            fill = "#e6edf5"
+            border = "#1a365d"
+            fontcolor = "#1a365d"
+            attrs = (
+                f'label="{_dot_escape(label)}", '
+                f'fillcolor="{fill}", color="{border}", fontcolor="{fontcolor}", '
+                f'penwidth=1.4'
+            )
+        else:
+            attrs = f'label="{_dot_escape(label)}"'
+        lines.append(f'  "{_dot_escape(nid)}" [{attrs}];')
+
+    for src, tgt, rel, color in edges:
+        lines.append(
+            f'  "{_dot_escape(src)}" -> "{_dot_escape(tgt)}" '
+            f'[label="{_dot_escape(rel)}", color="{color}", fontcolor="{color}"];'
+        )
+
+    lines.append('}')
+    return "\n".join(lines)
+
+
 def render_source_card(idx: int, src: dict, key_prefix: str):
     meta = src.get("metadata") or {}
     topic = meta.get("topic") or ""
@@ -350,19 +572,33 @@ def render_source_card(idx: int, src: dict, key_prefix: str):
                 unsafe_allow_html=True,
             )
 
-        if content:
-            if len(content) > PREVIEW_CHARS:
-                st.markdown(_make_preview(content))
-                with st.expander("Полный текст фрагмента", expanded=False):
-                    st.markdown(content)
-            else:
-                st.markdown(content)
-
         if citation and citation != display_title:
             st.markdown(
                 f'<div class="source-citation">{_esc(citation)}</div>',
                 unsafe_allow_html=True,
             )
+
+        triplets, body = _parse_facts_block(content)
+        body_text = body if body else (content if not triplets else "")
+
+        expander_bits = []
+        if triplets:
+            expander_bits.append(
+                f"подграф знаний ({len(triplets)} "
+                f"{'факт' if len(triplets) == 1 else 'фактов'})"
+            )
+        if body_text:
+            expander_bits.append("текст фрагмента")
+        if expander_bits:
+            label = "Раскрыть: " + " + ".join(expander_bits)
+            with st.expander(label, expanded=False):
+                if triplets:
+                    st.graphviz_chart(
+                        _render_triplet_dot(triplets),
+                        use_container_width=True,
+                    )
+                if body_text:
+                    st.markdown(body_text)
 
 
 def render_sources(sources: list[dict], key_prefix: str):

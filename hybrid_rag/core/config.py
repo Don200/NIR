@@ -129,6 +129,7 @@ class GraphConfig:
     max_triplets_per_chunk: int = 10
     include_embeddings: bool = True
     similarity_top_k: int = 10
+    path_depth: int = 1  # graph traversal hops from matched entity at retrieval
     num_workers: int = 4
     request_timeout: float = 60.0
     allowed_entity_types: list[str] = field(default_factory=list)

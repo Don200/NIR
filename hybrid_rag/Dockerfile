@@ -8,11 +8,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY pyproject.toml .
+# 1. Dependencies layer — cached unless pyproject.toml / uv.lock change.
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --no-dev --no-install-project
+
+# 2. Source code — invalidated on every code edit, but cheap to rebuild
+#    because the heavy `uv sync` above is already cached.
 COPY . /app/hybrid_rag/
 COPY config.yaml /app/config.yaml
-
-RUN uv sync --no-dev
 
 RUN mkdir -p /app/indexes
 

@@ -19,9 +19,11 @@ vector:
   min_chunk_chars: 100   # drop chunks shorter than this many chars (0 = off)
 
 graph:
-  max_triplets_per_chunk: 10
+  extractor: "dynamic"        # use ontology-driven extractor (matches existing graph schema)
+  max_triplets_per_chunk: 25  # upper bound per chunk at index time
   include_embeddings: true
   similarity_top_k: 10
+  path_depth: 2               # hops to traverse from each matched entity at retrieval
 
 generation:
   max_context_length: 15000  # characters, ~3 chunks

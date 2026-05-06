@@ -239,6 +239,7 @@ class GraphIndex:
         retriever = self._index.as_retriever(
             include_text=True,
             similarity_top_k=k,
+            path_depth=self.config.graph.path_depth,
         )
 
         nodes = retriever.retrieve(query)
