@@ -97,13 +97,21 @@ class GraphRAGIndex:
 
         # 3. Detect communities
         logger.info("[build] Step 3/6: Detecting communities...")
-        self.communities, self.entity_to_community_ids = (
-            self.community_detector.detect(self.graph_store)
-        )
-        logger.info(
-            f"[build] Step 3/6 done: {len(self.communities)} communities, "
-            f"{len(self.entity_to_community_ids)} entities mapped"
-        )
+        try:
+            self.communities, self.entity_to_community_ids = (
+                self.community_detector.detect(self.graph_store)
+            )
+            logger.info(
+                f"[build] Step 3/6 done: {len(self.communities)} communities, "
+                f"{len(self.entity_to_community_ids)} entities mapped"
+            )
+        except ImportError as e:
+            logger.warning(
+                "[build] Step 3/6 skipped: community detection dependency is missing: %s",
+                e,
+            )
+            self.communities = {}
+            self.entity_to_community_ids = {}
 
         # 4. Generate community summaries
         logger.info("[build] Step 4/6: Generating community summaries...")
